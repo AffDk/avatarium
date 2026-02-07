@@ -184,3 +184,9 @@ draft → submitted → moderating → splitting → reviewing → generating �
 **Validation rules**:
 - One-to-one relationship with Project
 - Only created when all clips are in `completed` status
+
+---
+
+## Design Note: Generated Image
+
+The spec's Key Entities section lists "Generated Image" as a conceptual entity. In the data model, this is **not a separate table**. The generated image for the first segment is tracked via `VideoClip.input_image_path` and stored on disk at `generated/{user_id}/{project_id}/images/`. Subsequent segments use the last frame of the previous clip (`VideoClip.last_frame_path`) as their input image. This avoids an extra join and simplifies the pipeline query pattern.

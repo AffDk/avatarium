@@ -25,7 +25,7 @@
 **Purpose**: Create directory structure, initialize uv project, configure tooling
 
 - [ ] T001 Create directory structure per plan.md: backend/{models,schemas,api,services,middleware,templates}/, static/{css,js,img}/, tests/{unit,integration,contract}/, migrations/versions/, uploads/, generated/
-- [ ] T002 Initialize uv project with `uv init --name avatarium --python 3.12` and add all dependencies per research.md Decision 1 (fastapi, uvicorn[standard], jinja2, python-multipart, sqlalchemy[asyncio], aiosqlite, alembic, fal-client, google-generativeai, ffmpeg-python, authlib, python-jose[cryptography], passlib[bcrypt], httpx, python-dotenv, pydantic-settings, slowapi; dev: pytest, pytest-asyncio, pytest-cov, httpx, ruff, mypy)
+- [ ] T002 Initialize uv project with `uv init --name avatarium --python 3.12` and add all dependencies per research.md Decision 1 (fastapi, uvicorn[standard], jinja2, python-multipart, sqlalchemy[asyncio], aiosqlite, asyncpg, alembic, fal-client, google-generativeai, ffmpeg-python, authlib, python-jose[cryptography], passlib[bcrypt], httpx, python-dotenv, pydantic-settings, slowapi; dev: pytest, pytest-asyncio, pytest-cov, httpx, ruff, mypy)
 - [ ] T003 [P] Create .env.example with all required variables per quickstart.md Section 3 (APP_SECRET_KEY, DATABASE_URL, FAL_KEY, GEMINI_API_KEY, JWT_SECRET_KEY, JWT_ALGORITHM, JWT_EXPIRATION_MINUTES, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI)
 - [ ] T004 [P] Configure ruff and mypy settings in pyproject.toml (target Python 3.12, line-length 100, src=["backend"], strict mypy)
 
@@ -44,6 +44,7 @@
 - [ ] T009 Setup Alembic migrations framework in migrations/ (alembic init, configure env.py for async SQLAlchemy, generate initial migration for User table)
 - [ ] T010 [P] Create backend/schemas/auth.py with Pydantic v2 schemas per contracts/api.yaml: RegisterRequest, LoginRequest, AuthResponse, UserResponse
 - [ ] T011 [P] Create backend/services/auth_service.py with password hashing (passlib bcrypt), JWT creation/verification (python-jose HS256), get_current_user dependency, register_user, authenticate_user functions
+- [ ] T011a [P] Write integration tests for auth API in tests/integration/test_auth_api.py: test POST /api/auth/register (201/409/422), POST /api/auth/login (200/401), GET /api/auth/me (200/401), unauthenticated access (401), duplicate email registration (409). Tests MUST fail before T012 implementation.
 - [ ] T012 Implement backend/api/auth.py with POST /api/auth/register (201/409/422), POST /api/auth/login (200/401), GET /api/auth/me (200/401) per contracts/api.yaml Auth section
 - [ ] T013 [P] Create backend/middleware/__init__.py and backend/middleware/rate_limit.py using SlowAPI with configurable limits
 - [ ] T014 [P] Create backend/api/health.py with GET /api/health returning {"status": "ok"} for deployment readiness checks
@@ -67,7 +68,7 @@
 
 > **NOTE: Write these tests FIRST, ensure they FAIL before implementation**
 
-- [ ] T020 [P] [US1] Write unit tests for upload_service in tests/unit/test_upload_service.py: test filename parsing (person1_1.jpg → person="person1" seq=1), case-insensitive handling (PERSON1_1.JPG), rejection of invalid names (myphoto.jpg, no_number.jpg), file size validation (≤10MB), MIME type validation (jpeg/png/webp only), person grouping from multiple files
+- [ ] T020 [P] [US1] Write unit tests for upload_service in tests/unit/test_upload_service.py: test filename parsing (person1_1.jpg → person="person1" seq=1), case-insensitive handling (PERSON1_1.JPG), rejection of invalid names (myphoto.jpg, no_number.jpg), file size validation (≤10MB), MIME type validation (jpeg/png/webp only), person grouping from multiple files, person-reference validation (FR-008: scenario mentioning "person3" when only person1/person2 uploaded → warning list)
 - [ ] T021 [P] [US1] Write integration tests for project and photo API in tests/integration/test_project_api.py: test create project (201), list projects (200, user-scoped), get project detail (200/404), upload valid photos (201 with person grouping), upload invalid filename (400), upload oversized file (413), delete photo (204), delete project cascade (204)
 
 ### Implementation for User Story 1
@@ -75,6 +76,7 @@
 - [ ] T022 [P] [US1] Create backend/models/project.py with Project (id, user_id FK, title, video_style enum, status enum with transitions, estimated_cost, actual_cost, timestamps), Person (id, project_id FK, name, unique on project_id+name), Photo (id, person_id FK, original_filename, sequence_number, file_path, file_size, mime_type, unique on person_id+sequence_number) per data-model.md
 - [ ] T023 [P] [US1] Create backend/schemas/project.py with Pydantic v2 schemas per contracts/api.yaml: CreateProjectRequest, ProjectResponse, ProjectDetailResponse, ProjectListResponse, PersonResponse, PhotoResponse, PhotoGroupResponse, PhotoUploadResponse
 - [ ] T024 [US1] Create backend/services/upload_service.py with parse_filename(name) → (person_name, sequence_number), validate_file(file) → check size ≤10MB and MIME type, group_files_by_person(files) → dict, save_photo(file, project_id) → Photo, ensuring user-scoped directory structure uploads/{user_id}/{project_id}/
+- [ ] T024a [US1] Add validate_person_references(scenario_text, person_names) → list[str] to backend/services/upload_service.py: case-insensitive substring search for each uploaded person name within scenario text, return list of warnings for referenced names not found in uploads (FR-008)
 - [ ] T025 [US1] Implement backend/api/projects.py with GET /api/projects (paginated, user-scoped), POST /api/projects (201), GET /api/projects/{id} (200/404), DELETE /api/projects/{id} (204/404), GET /api/projects/{id}/photos (grouped by person), POST /api/projects/{id}/photos (multipart upload, 201/400/413), DELETE /api/projects/{id}/photos/{photoId} (204/404) per contracts/api.yaml
 - [ ] T026 [US1] Generate Alembic migration for Project, Person, and Photo tables
 - [ ] T027 [US1] Create backend/templates/dashboard.html extending base.html with project list (title, style, status, date), "New Project" button, empty state message
@@ -255,7 +257,7 @@ Phase 9 (Polish)
 ### Parallel Opportunities
 
 **Phase 2** (after T005-T007 complete):
-- T010, T011, T013, T014 can all run in parallel (different files, no deps)
+- T010, T011, T011a, T013, T014 can all run in parallel (different files, no deps)
 
 **Phase 3** (US1 — all tests + models + schemas in parallel):
 - T020, T021, T022, T023 can all run in parallel

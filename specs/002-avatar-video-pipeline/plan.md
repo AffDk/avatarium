@@ -11,7 +11,7 @@ Build a web application where users upload named photos of people, write a video
 
 **Language/Version**: Python 3.12+
 **Package Manager**: uv (for virtual environment creation and package management)
-**Primary Dependencies**: FastAPI, Uvicorn, Jinja2, python-multipart, google-generativeai, fal-client, ffmpeg-python, python-jose[cryptography], passlib[bcrypt], python-dotenv, SQLAlchemy, aiosqlite, httpx, Authlib
+**Primary Dependencies**: FastAPI, Uvicorn, Jinja2, python-multipart, google-generativeai, fal-client, ffmpeg-python, python-jose[cryptography], passlib[bcrypt], python-dotenv, SQLAlchemy, aiosqlite, asyncpg, httpx, Authlib, SlowAPI, pydantic-settings
 **Storage**: SQLite (dev) / PostgreSQL (prod) via SQLAlchemy async; file storage on local disk (dev) / cloud object storage (prod)
 **Testing**: pytest, pytest-asyncio, pytest-cov, httpx (for async test client)
 **Target Platform**: Linux server (deployment), Windows/macOS (development)

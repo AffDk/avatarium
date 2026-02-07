@@ -42,7 +42,7 @@ Follow industry-standard software development practices: version control, code r
 
 ## Video Generation
 
-- At least two video styles are supported: "Cartoonic" and "Movie-like."
+- At least two video styles are supported: "Animation" (stylized/cartoon) and "Movie-like" (realistic/cinematic).
 - Video generation is asynchronous; users receive status updates.
 - Users can view, replay, download, and delete their generated videos.
 - Project deletion permanently removes all associated data (photos, scenario, video).

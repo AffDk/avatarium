@@ -364,6 +364,105 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  # ── Segment Editing ──────────────────────────────────────
+  /api/projects/{projectId}/scenario/segments/{segmentId}:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+      - name: segmentId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    patch:
+      tags: [Scenarios]
+      operationId: updateSegment
+      summary: Edit a segment description
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateSegmentRequest'
+      responses:
+        '200':
+          description: Segment updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SegmentResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Cannot edit segments during or after generation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    delete:
+      tags: [Scenarios]
+      operationId: deleteSegment
+      summary: Remove a segment and renumber remaining segments
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Segment deleted, remaining segments renumbered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScenarioDetailResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Cannot delete segments during or after generation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/projects/{projectId}/scenario/segments/reorder:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    put:
+      tags: [Scenarios]
+      operationId: reorderSegments
+      summary: Reorder segments by providing an ordered list of segment IDs
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReorderSegmentsRequest'
+      responses:
+        '200':
+          description: Segments reordered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScenarioDetailResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Cannot reorder segments during or after generation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
   # ── Pipeline ──────────────────────────────────────────────
   /api/projects/{projectId}/generate:
     parameters:
@@ -783,6 +882,29 @@ components:
         generation_status:
           type: string
           enum: [pending, generating, completed, failed]
+
+    # ── Segment Editing ─────────────────────────────────
+    UpdateSegmentRequest:
+      type: object
+      required: [description]
+      properties:
+        description:
+          type: string
+          minLength: 1
+          maxLength: 5000
+
+    ReorderSegmentsRequest:
+      type: object
+      required: [segment_ids]
+      properties:
+        segment_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+          minItems: 1
+          maxItems: 15
+          description: Ordered list of all segment IDs in the desired order
 
     # ── Pipeline ──────────────────────────────────────────
     PipelineStatusResponse:
