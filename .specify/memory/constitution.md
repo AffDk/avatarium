@@ -1,50 +1,68 @@
-# [PROJECT_NAME] Constitution
-<!-- Example: Spec Constitution, TaskFlow Constitution, etc. -->
+# Avatarium Constitution
 
 ## Core Principles
 
-### [PRINCIPLE_1_NAME]
-<!-- Example: I. Library-First -->
-[PRINCIPLE_1_DESCRIPTION]
-<!-- Example: Every feature starts as a standalone library; Libraries must be self-contained, independently testable, documented; Clear purpose required - no organizational-only libraries -->
+### I. Privacy-First Architecture
+All user data (photos, scenarios, generated videos) is strictly isolated per user. No user can ever view, access, or discover another user's content. Every data-access endpoint enforces ownership verification. User data is never exposed in public URLs, search indices, or shared storage without access controls.
 
-### [PRINCIPLE_2_NAME]
-<!-- Example: II. CLI Interface -->
-[PRINCIPLE_2_DESCRIPTION]
-<!-- Example: Every library exposes functionality via CLI; Text in/out protocol: stdin/args → stdout, errors → stderr; Support JSON + human-readable formats -->
+### II. Content Safety
+Every user-submitted scenario is screened for prohibited content (heinous, profane, pornographic, sexual, violent) before any processing begins. The system errs on the side of caution for borderline content. Content moderation cannot be bypassed or skipped.
 
-### [PRINCIPLE_3_NAME]
-<!-- Example: III. Test-First (NON-NEGOTIABLE) -->
-[PRINCIPLE_3_DESCRIPTION]
-<!-- Example: TDD mandatory: Tests written → User approved → Tests fail → Then implement; Red-Green-Refactor cycle strictly enforced -->
+### III. Security by Default
+No API keys, credentials, or secrets are ever committed to version control or stored in configuration files within the repository. All sensitive configuration uses environment variables or a secure secrets management service. HTTPS is enforced for all communications. Rate limiting is applied to prevent abuse. All security-relevant events are logged.
 
-### [PRINCIPLE_4_NAME]
-<!-- Example: IV. Integration Testing -->
-[PRINCIPLE_4_DESCRIPTION]
-<!-- Example: Focus areas requiring integration tests: New library contract tests, Contract changes, Inter-service communication, Shared schemas -->
+### IV. Responsive & Accessible Design
+The platform must function correctly on both desktop (1024px+ viewport) and mobile (320px+ viewport) devices. All user flows must be completable on any supported device. Ad placements must never obstruct core functionality.
 
-### [PRINCIPLE_5_NAME]
-<!-- Example: V. Observability, VI. Versioning & Breaking Changes, VII. Simplicity -->
-[PRINCIPLE_5_DESCRIPTION]
-<!-- Example: Text I/O ensures debuggability; Structured logging required; Or: MAJOR.MINOR.BUILD format; Or: Start simple, YAGNI principles -->
+### V. Test-First Development (NON-NEGOTIABLE)
+TDD is mandatory: tests are written first, then approved, then must fail, then implementation proceeds. Red-Green-Refactor cycle is strictly enforced. Every functional requirement must have corresponding automated tests. Content moderation, access control, and file validation must have comprehensive test coverage.
 
-## [SECTION_2_NAME]
-<!-- Example: Additional Constraints, Security Requirements, Performance Standards, etc. -->
+### VI. Deployment Readiness
+The application is structured for deployment on external web-accessible servers from day one. Environment-specific configuration is separated from application code. Health-check endpoints are provided. Deployment to a new environment must be achievable using documented steps in under 30 minutes.
 
-[SECTION_2_CONTENT]
-<!-- Example: Technology stack requirements, compliance standards, deployment policies, etc. -->
+### VII. Professional Standards
+Follow industry-standard software development practices: version control, code review, meaningful commit messages, documentation, and clean architecture. Code must be maintainable, modular, and well-documented.
 
-## [SECTION_3_NAME]
-<!-- Example: Development Workflow, Review Process, Quality Gates, etc. -->
+## Authentication & User Management
 
-[SECTION_3_CONTENT]
-<!-- Example: Code review requirements, testing gates, deployment approval process, etc. -->
+- Email/password registration and Google OAuth are both supported authentication methods.
+- Accounts with the same email address across authentication methods are linked to prevent duplicates.
+- Email verification is required for email/password registrations.
+- Terms of Use must be presented and accepted before any platform features are accessible.
+- Terms acceptance is recorded with a timestamp and not re-prompted unless terms are updated.
+- Unauthenticated visitors can only see the landing/sign-in page.
+
+## Upload & Content Constraints
+
+- Accepted photo formats: JPEG, PNG, WebP only.
+- Maximum file size: 10 MB per individual photo.
+- Maximum photos per person: 10 per project.
+- File type and size are validated before upload acceptance.
+- Scenarios must pass content moderation before being accepted for processing.
+
+## Video Generation
+
+- At least two video styles are supported: "Cartoonic" and "Movie-like."
+- Video generation is asynchronous; users receive status updates.
+- Users can view, replay, download, and delete their generated videos.
+- Project deletion permanently removes all associated data (photos, scenario, video).
+
+## Ad Integration
+
+- The interface includes designated ad placement zones (sidebar, banner, interstitial).
+- Ad zones are clearly separated from application content.
+- Ad loading failures are handled gracefully without breaking the user interface.
+- Ad placements adapt to device context (desktop vs. mobile).
+
+## Development Workflow
+
+- All PRs and code reviews must verify compliance with this constitution.
+- Security-sensitive changes (authentication, authorization, data access) require additional scrutiny.
+- No feature is shipped without passing all automated tests.
+- Complexity must be justified; prefer simple, maintainable solutions (YAGNI).
 
 ## Governance
-<!-- Example: Constitution supersedes all other practices; Amendments require documentation, approval, migration plan -->
 
-[GOVERNANCE_RULES]
-<!-- Example: All PRs/reviews must verify compliance; Complexity must be justified; Use [GUIDANCE_FILE] for runtime development guidance -->
+This constitution supersedes all other practices for the Avatarium project. Amendments require documentation, team approval, and a migration plan for existing code.
 
-**Version**: [CONSTITUTION_VERSION] | **Ratified**: [RATIFICATION_DATE] | **Last Amended**: [LAST_AMENDED_DATE]
-<!-- Example: Version: 2.1.1 | Ratified: 2025-06-13 | Last Amended: 2025-07-16 -->
+**Version**: 1.0.0 | **Ratified**: 2026-02-07 | **Last Amended**: 2026-02-07

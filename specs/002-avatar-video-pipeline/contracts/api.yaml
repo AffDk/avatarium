@@ -1,0 +1,872 @@
+openapi: 3.0.3
+info:
+  title: Avatarium API
+  description: Avatar video generation platform API
+  version: 0.1.0
+  contact:
+    name: Avatarium
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:8000
+    description: Local development
+  - url: https://api.avatarium.example.com
+    description: Production
+
+tags:
+  - name: Auth
+    description: Authentication and registration
+  - name: Projects
+    description: Video project management
+  - name: Photos
+    description: Photo upload and management
+  - name: Scenarios
+    description: Scenario submission and moderation
+  - name: Pipeline
+    description: Video generation pipeline
+  - name: Videos
+    description: Video retrieval and download
+
+paths:
+  # ── Auth ──────────────────────────────────────────────────
+  /api/auth/register:
+    post:
+      tags: [Auth]
+      operationId: register
+      summary: Register with email and password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: Account created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '409':
+          description: Email already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /api/auth/login:
+    post:
+      tags: [Auth]
+      operationId: login
+      summary: Login with email and password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '401':
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/auth/google:
+    get:
+      tags: [Auth]
+      operationId: googleOAuthRedirect
+      summary: Redirect to Google OAuth consent screen
+      responses:
+        '302':
+          description: Redirect to Google
+
+  /api/auth/google/callback:
+    get:
+      tags: [Auth]
+      operationId: googleOAuthCallback
+      summary: Handle Google OAuth callback
+      parameters:
+        - name: code
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: state
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '302':
+          description: Redirect to dashboard with session cookie
+        '401':
+          description: OAuth error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/auth/me:
+    get:
+      tags: [Auth]
+      operationId: getCurrentUser
+      summary: Get current authenticated user
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Current user profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # ── Projects ──────────────────────────────────────────────
+  /api/projects:
+    get:
+      tags: [Projects]
+      operationId: listProjects
+      summary: List user's projects
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+            minimum: 1
+        - name: per_page
+          in: query
+          schema:
+            type: integer
+            default: 20
+            minimum: 1
+            maximum: 100
+      responses:
+        '200':
+          description: Paginated list of projects
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    post:
+      tags: [Projects]
+      operationId: createProject
+      summary: Create a new video project
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateProjectRequest'
+      responses:
+        '201':
+          description: Project created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /api/projects/{projectId}:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    get:
+      tags: [Projects]
+      operationId: getProject
+      summary: Get project details
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Project details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectDetailResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      tags: [Projects]
+      operationId: deleteProject
+      summary: Delete a project and all associated data
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Project deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ── Photos ────────────────────────────────────────────────
+  /api/projects/{projectId}/photos:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    get:
+      tags: [Photos]
+      operationId: listPhotos
+      summary: List photos grouped by person
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Photos grouped by person
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PhotoGroupResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    post:
+      tags: [Photos]
+      operationId: uploadPhotos
+      summary: Upload photos for a project
+      description: |
+        Upload one or more photos. Filenames must follow the naming convention:
+        `<personName>_<sequenceNumber>.<extension>` (e.g., `alice_1.jpg`, `alice_2.png`).
+        Person records are created automatically from the filename prefix.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                photos:
+                  type: array
+                  items:
+                    type: string
+                    format: binary
+                  minItems: 1
+                  maxItems: 50
+      responses:
+        '201':
+          description: Photos uploaded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PhotoUploadResponse'
+        '400':
+          description: Invalid filename format or file type
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          description: File too large (max 10 MB)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/projects/{projectId}/photos/{photoId}:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+      - name: photoId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    delete:
+      tags: [Photos]
+      operationId: deletePhoto
+      summary: Delete a specific photo
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Photo deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ── Scenarios ─────────────────────────────────────────────
+  /api/projects/{projectId}/scenario:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    put:
+      tags: [Scenarios]
+      operationId: submitScenario
+      summary: Submit or update the scenario text
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubmitScenarioRequest'
+      responses:
+        '200':
+          description: Scenario submitted for moderation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScenarioResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+    get:
+      tags: [Scenarios]
+      operationId: getScenario
+      summary: Get scenario with moderation status and segments
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Scenario details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScenarioDetailResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ── Pipeline ──────────────────────────────────────────────
+  /api/projects/{projectId}/generate:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    post:
+      tags: [Pipeline]
+      operationId: startGeneration
+      summary: Start the video generation pipeline
+      description: |
+        Triggers the full generation pipeline:
+        1. Moderate scenario via Gemini
+        2. Split into segments via Gemini
+        3. Generate first image via fal.ai (Qwen Image)
+        4. For each segment: generate video clip → extract last frame → repeat
+        5. Concatenate all clips via FFmpeg
+      security:
+        - bearerAuth: []
+      responses:
+        '202':
+          description: Pipeline started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PipelineStatusResponse'
+        '400':
+          description: Missing photos or scenario
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Pipeline already running
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/projects/{projectId}/status:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    get:
+      tags: [Pipeline]
+      operationId: getPipelineStatus
+      summary: Get current pipeline status
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Pipeline status with per-segment progress
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PipelineStatusResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ── Videos ────────────────────────────────────────────────
+  /api/projects/{projectId}/video:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    get:
+      tags: [Videos]
+      operationId: getFinalVideo
+      summary: Get final video metadata
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Final video metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FinalVideoResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/projects/{projectId}/video/download:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    get:
+      tags: [Videos]
+      operationId: downloadFinalVideo
+      summary: Download the final concatenated video
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Video file stream
+          content:
+            video/mp4:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/projects/{projectId}/clips/{clipId}/preview:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+      - name: clipId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      tags: [Videos]
+      operationId: previewClip
+      summary: Preview an individual video clip
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Individual clip stream
+          content:
+            video/mp4:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    ProjectId:
+      name: projectId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid authentication
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ValidationError:
+      description: Validation error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ValidationErrorResponse'
+
+  schemas:
+    # ── Auth ──────────────────────────────────────────────
+    RegisterRequest:
+      type: object
+      required: [email, password, display_name]
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 255
+        password:
+          type: string
+          minLength: 8
+          maxLength: 128
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 100
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+
+    AuthResponse:
+      type: object
+      properties:
+        access_token:
+          type: string
+        token_type:
+          type: string
+          enum: [bearer]
+        expires_in:
+          type: integer
+          description: Token lifetime in seconds
+        user:
+          $ref: '#/components/schemas/UserResponse'
+
+    UserResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+        display_name:
+          type: string
+        has_google_linked:
+          type: boolean
+        email_verified:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+
+    # ── Projects ──────────────────────────────────────────
+    CreateProjectRequest:
+      type: object
+      required: [title, video_style]
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+        video_style:
+          type: string
+          enum: [animation, movie_like]
+
+    ProjectResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        video_style:
+          type: string
+          enum: [animation, movie_like]
+        status:
+          type: string
+          enum: [draft, submitted, moderating, splitting, reviewing, generating, concatenating, completed, rejected, failed]
+        estimated_cost:
+          type: number
+          nullable: true
+        actual_cost:
+          type: number
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ProjectDetailResponse:
+      allOf:
+        - $ref: '#/components/schemas/ProjectResponse'
+        - type: object
+          properties:
+            persons:
+              type: array
+              items:
+                $ref: '#/components/schemas/PersonResponse'
+            scenario:
+              $ref: '#/components/schemas/ScenarioResponse'
+              nullable: true
+            final_video:
+              $ref: '#/components/schemas/FinalVideoResponse'
+              nullable: true
+
+    ProjectListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProjectResponse'
+        page:
+          type: integer
+        per_page:
+          type: integer
+        total:
+          type: integer
+
+    PersonResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        photo_count:
+          type: integer
+
+    # ── Photos ────────────────────────────────────────────
+    PhotoGroupResponse:
+      type: object
+      properties:
+        persons:
+          type: array
+          items:
+            type: object
+            properties:
+              person:
+                $ref: '#/components/schemas/PersonResponse'
+              photos:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PhotoResponse'
+
+    PhotoResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        original_filename:
+          type: string
+        sequence_number:
+          type: integer
+        file_size:
+          type: integer
+        mime_type:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    PhotoUploadResponse:
+      type: object
+      properties:
+        uploaded:
+          type: integer
+          description: Number of photos successfully uploaded
+        persons_created:
+          type: array
+          items:
+            type: string
+          description: Names of newly created persons
+        photos:
+          type: array
+          items:
+            $ref: '#/components/schemas/PhotoResponse'
+
+    # ── Scenarios ─────────────────────────────────────────
+    SubmitScenarioRequest:
+      type: object
+      required: [text]
+      properties:
+        text:
+          type: string
+          minLength: 1
+          maxLength: 10000
+
+    ScenarioResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        text:
+          type: string
+        moderation_status:
+          type: string
+          enum: [pending, approved, rejected]
+        rejection_reason:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        moderated_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    ScenarioDetailResponse:
+      allOf:
+        - $ref: '#/components/schemas/ScenarioResponse'
+        - type: object
+          properties:
+            segments:
+              type: array
+              items:
+                $ref: '#/components/schemas/SegmentResponse'
+
+    SegmentResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        sequence_number:
+          type: integer
+        description:
+          type: string
+        estimated_duration:
+          type: number
+        generation_status:
+          type: string
+          enum: [pending, generating, completed, failed]
+
+    # ── Pipeline ──────────────────────────────────────────
+    PipelineStatusResponse:
+      type: object
+      properties:
+        project_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [draft, submitted, moderating, splitting, reviewing, generating, concatenating, completed, rejected, failed]
+        current_segment:
+          type: integer
+          nullable: true
+        total_segments:
+          type: integer
+          nullable: true
+        clips:
+          type: array
+          items:
+            $ref: '#/components/schemas/ClipStatusResponse'
+        estimated_cost:
+          type: number
+          nullable: true
+
+    ClipStatusResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        sequence_number:
+          type: integer
+        status:
+          type: string
+          enum: [pending, generating, completed, failed]
+        retry_count:
+          type: integer
+        error_message:
+          type: string
+          nullable: true
+
+    # ── Videos ────────────────────────────────────────────
+    FinalVideoResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        total_duration:
+          type: number
+        total_cost:
+          type: number
+        file_size:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+
+    # ── Common ────────────────────────────────────────────
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        detail:
+          type: string
+          nullable: true
+
+    ValidationErrorResponse:
+      type: object
+      properties:
+        detail:
+          type: array
+          items:
+            type: object
+            properties:
+              loc:
+                type: array
+                items:
+                  oneOf:
+                    - type: string
+                    - type: integer
+              msg:
+                type: string
+              type:
+                type: string
