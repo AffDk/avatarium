@@ -58,8 +58,8 @@ If starting fresh from the planned `pyproject.toml`:
 uv add fastapi uvicorn[standard] jinja2 python-multipart
 uv add sqlalchemy[asyncio] aiosqlite asyncpg alembic
 uv add fal-client google-generativeai
-uv add ffmpeg-python
-uv add authlib python-jose[cryptography] passlib[bcrypt] httpx
+uv add bcrypt
+uv add authlib python-jose[cryptography] httpx
 uv add python-dotenv pydantic pydantic-settings
 
 # Add dev dependencies

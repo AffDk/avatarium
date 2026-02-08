@@ -13,6 +13,8 @@ from pathlib import Path
 
 import httpx
 
+from backend.config import settings
+
 try:
     import fal_client
 except ImportError:
@@ -50,7 +52,7 @@ async def generate_video_clip(
     """
     # Read image and upload via fal
     result = await fal_client.subscribe(
-        "fal-ai/ltx-video-13b-distilled/image-to-video",
+        settings.fal_video_model,
         arguments={
             "prompt": prompt,
             "image_url": image_path,  # fal_client handles local file upload

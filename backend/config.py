@@ -23,9 +23,12 @@ class Settings(BaseSettings):
 
     # ── fal.ai ──────────────────────────────────
     fal_key: str = ""
+    fal_image_model: str = "fal-ai/qwen-image"
+    fal_video_model: str = "fal-ai/ltx-video-13b-distilled/image-to-video"
 
     # ── Gemini ──────────────────────────────────
     gemini_api_key: str = ""
+    gemini_model: str = "gemini-2.5-flash"
 
     # ── Google OAuth ────────────────────────────
     google_client_id: str = ""
@@ -36,6 +39,9 @@ class Settings(BaseSettings):
     jwt_secret_key: str = "change-me"
     jwt_algorithm: str = "HS256"
     jwt_expiration_minutes: int = 60
+
+    # ── Rate Limiting ────────────────────────────
+    rate_limit_default: str = "10/minute"
 
     @property
     def is_development(self) -> bool:

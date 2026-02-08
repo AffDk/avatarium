@@ -49,11 +49,13 @@ def create_app() -> FastAPI:
     from backend.api.auth import router as auth_router
     from backend.api.projects import router as projects_router
     from backend.api.scenarios import router as scenarios_router
+    from backend.api.generation import router as generation_router
 
     app.include_router(health_router)
     app.include_router(auth_router)
     app.include_router(projects_router)
     app.include_router(scenarios_router)
+    app.include_router(generation_router)
 
     return app
 

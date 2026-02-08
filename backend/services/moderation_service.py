@@ -1,7 +1,8 @@
-"""Moderation service — Gemini 2.0 Flash for content moderation + scenario splitting.
+"""Moderation service — Gemini for content moderation + scenario splitting.
 
 Uses a single combined prompt per research.md Decision 4:
 one API call for both moderation and splitting.
+Model is configurable via GEMINI_MODEL env var (default: gemini-2.5-flash).
 """
 
 import json
@@ -53,11 +54,11 @@ If approved, provide 1-15 segments covering the full scenario.
 
 
 async def _call_gemini(prompt: str) -> str:
-    """Call Gemini 2.0 Flash and return the text response.
+    """Call Gemini and return the text response.
 
     This function is separated for easy mocking in tests.
     """
-    model = genai.GenerativeModel("gemini-2.0-flash")
+    model = genai.GenerativeModel(settings.gemini_model)
     response = await model.generate_content_async(prompt)
     return response.text
 

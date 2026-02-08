@@ -1,12 +1,14 @@
-"""Image generation service using fal.ai Qwen Image model.
+"""Image generation service using fal.ai text-to-image model.
 
-Uses fal_client.subscribe("fal-ai/qwen-image") per research.md.
+Uses fal_client.subscribe() with configurable model per settings.fal_image_model.
 """
 
 import os
 from pathlib import Path
 
 import httpx
+
+from backend.config import settings
 
 try:
     import fal_client
@@ -50,7 +52,7 @@ async def generate_initial_image(
     full_prompt = f"{prompt}, {style_directive}"
 
     result = await fal_client.subscribe(
-        "fal-ai/qwen-image",
+        settings.fal_image_model,
         arguments={
             "prompt": full_prompt,
             "image_size": "landscape_16_9",

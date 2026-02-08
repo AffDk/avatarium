@@ -117,15 +117,17 @@ Before generation begins, the user can review the scenario segments produced by 
 
 ### Edge Cases
 
-- What happens when a user uploads only one photo per person? Is that sufficient for generation?
-- How does the system handle a scenario that is only one sentence long (produces only 1 segment)?
-- What happens if the last-frame extraction fails or produces a corrupted image?
-- How does the system handle generation when fal.ai rate limits are hit or the service is temporarily down?
-- What happens if the user closes their browser mid-generation? Can they resume later?
-- How does the system handle naming like `PERSON1_1.JPG` (uppercase) or `person1_01.jpg` (zero-padded numbers)?
-- What if the concatenated video exceeds a maximum playable file size for mobile devices?
-- What happens if the LLM moderation service is unavailable? Does the project queue or fail?
-- How does the system handle scenarios written in languages other than English?
+- What happens when a user uploads only one photo per person? Is that sufficient for generation? → **MVP: Yes, 1 photo is sufficient. No minimum enforced.**
+- How does the system handle a scenario that is only one sentence long (produces only 1 segment)? → **MVP: Valid — produces 1 clip, then concatenates to a single-clip video.**
+- What happens if the last-frame extraction fails or produces a corrupted image? → **MVP: Treated as clip failure; triggers 1 retry per FR-024.**
+- How does the system handle generation when fal.ai rate limits are hit or the service is temporarily down? → *Deferred to post-MVP.*
+- What happens if the user closes their browser mid-generation? Can they resume later? → *Deferred to post-MVP. Pipeline runs server-side; user can check status on return.*
+- How does the system handle naming like `PERSON1_1.JPG` (uppercase) or `person1_01.jpg` (zero-padded numbers)? → **MVP: FR-003 covers case-insensitivity. Zero-padded numbers (01→01) are parsed as integers.**
+- What if the concatenated video exceeds a maximum playable file size for mobile devices? → *Deferred to post-MVP. 15 segments × 5s @ 480p unlikely to exceed mobile limits.*
+- What happens if the LLM moderation service is unavailable? Does the project queue or fail? → *Deferred to post-MVP. MVP: returns 502/503 error.*
+- How does the system handle scenarios written in languages other than English? → *Deferred to post-MVP. MVP: English only; non-English may produce unpredictable results.*
+
+> **Deferral Policy**: Items marked *Deferred to post-MVP* will be tracked as future enhancement issues after initial launch.
 
 ## Requirements *(mandatory)*
 
@@ -167,6 +169,7 @@ Before generation begins, the user can review the scenario segments produced by 
 
 - **FR-018**: For the first segment, system MUST generate a still image by constructing a text prompt that incorporates the uploaded person names and the segment description in the selected visual style. (Note: the chosen model, Qwen Image, is text-to-image; person names from uploads are included in the prompt rather than raw photos.)
 - **FR-019**: System MUST convert the generated image into a ~5-second video clip guided by the segment description.
+  > **Duration tolerance**: Target 5 seconds per clip; acceptable range 3–7 seconds. Actual duration is model-dependent and varies with fal.ai output.
 - **FR-020**: System MUST extract the last frame of each generated video clip for use as the starting image of the next clip.
 - **FR-021**: For each subsequent segment, system MUST generate the next video clip using the last frame from the previous clip and the current segment description.
 - **FR-022**: System MUST disable audio generation by default to minimize per-clip cost.
@@ -176,7 +179,8 @@ Before generation begins, the user can review the scenario segments produced by 
 #### Video Concatenation
 
 - **FR-025**: System MUST concatenate all generated clips in order into a single continuous video file after all clips are complete.
-- **FR-026**: System MUST make the final video available for inline preview, playback, and download.
+- **FR-026**: System MUST make the final video available for inline preview, playback, and download. The video player MUST be responsive and functional on mobile viewports (320px+).
+- **FR-026a**: System SHOULD allow users to delete an individual generated video without requiring full project deletion. Project deletion MUST cascade-delete all associated videos. Constitution: "Users can view, replay, download, and delete their generated videos."
 
 #### Cost Optimization
 

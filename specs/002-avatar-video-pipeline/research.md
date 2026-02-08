@@ -111,9 +111,11 @@ Given the following video scenario, perform TWO tasks:
    Respond with: {"status": "approved", "segments": ["...", "..."]}
 ```
 
-## Decision 5: Video Concatenation — FFmpeg
+## Decision 5: Video Concatenation — FFmpeg ⚠️ PARTIALLY SUPERSEDED
 
-**Decision**: Use FFmpeg via `ffmpeg-python` wrapper for server-side video concatenation.
+> **Superseded**: The `ffmpeg-python` wrapper has been replaced with direct `subprocess.run` calls to the `ffmpeg` CLI binary. See plan.md Design Deviations Log, entry #2. FFmpeg itself remains the tool of choice; only the Python interface changed.
+
+**Decision**: Use FFmpeg via ~~`ffmpeg-python` wrapper~~ `subprocess.run` for server-side video concatenation.
 
 **Rationale**:
 - Free, open-source, industry standard
@@ -157,13 +159,15 @@ Given the following video scenario, perform TWO tasks:
 - Alembic handles schema migrations
 - User data isolation enforced at the query level (all queries include `user_id` filter)
 
-## Decision 8: Authentication — JWT + Google OAuth via Authlib
+## Decision 8: Authentication — JWT + Google OAuth via Authlib ⚠️ PARTIALLY SUPERSEDED
+
+> **Superseded**: `passlib[bcrypt]` has been replaced with direct `bcrypt` library (bcrypt.hashpw/checkpw). See Decision 10 below and plan.md Design Deviations Log, entry #1. JWT (python-jose) and Authlib decisions remain unchanged.
 
 **Decision**: Email/password with JWT tokens + Google OAuth via Authlib.
 
 **Rationale**:
 - `python-jose` for JWT creation/verification
-- `passlib` with bcrypt for password hashing
+- ~~`passlib` with bcrypt~~ Direct `bcrypt` library for password hashing (see Decision 10)
 - `Authlib` for Google OAuth flow (well-maintained, supports async)
 - Tokens stored in HTTP-only cookies for web security
 - Aligns with constitution: email/password + Google OAuth both supported

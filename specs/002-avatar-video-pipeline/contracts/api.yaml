@@ -482,11 +482,11 @@ paths:
         - bearerAuth: []
       responses:
         '202':
-          description: Pipeline started
+          description: Pipeline started (acknowledgment only; poll GET /status for progress)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PipelineStatusResponse'
+                $ref: '#/components/schemas/GenerationAcceptedResponse'
         '400':
           description: Missing photos or scenario
           content:
@@ -907,6 +907,17 @@ components:
           description: Ordered list of all segment IDs in the desired order
 
     # ── Pipeline ──────────────────────────────────────────
+    GenerationAcceptedResponse:
+      type: object
+      description: Lightweight 202 acknowledgment for POST /generate. Poll GET /status for full pipeline progress.
+      properties:
+        status:
+          type: string
+          enum: [generating]
+        project_id:
+          type: string
+          format: uuid
+
     PipelineStatusResponse:
       type: object
       properties:
@@ -967,12 +978,12 @@ components:
     # ── Common ────────────────────────────────────────────
     ErrorResponse:
       type: object
+      description: |
+        Matches FastAPI's native HTTPException response format.
+        Only the 'detail' field is used (no separate 'error' field).
       properties:
-        error:
-          type: string
         detail:
           type: string
-          nullable: true
 
     ValidationErrorResponse:
       type: object
