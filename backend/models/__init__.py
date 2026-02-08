@@ -13,3 +13,4 @@ class Base(DeclarativeBase):
 # These imports MUST remain at the bottom to avoid circular imports.
 from backend.models.user import User  # noqa: E402, F401
 from backend.models.project import Person, Photo, Project  # noqa: E402, F401
+from backend.models.scenario import Scenario, Segment  # noqa: E402, F401

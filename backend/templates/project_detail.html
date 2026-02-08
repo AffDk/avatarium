@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+
+{% block title %}Project Detail — Avatarium{% endblock %}
+
+{% block content %}
+<div class="project-detail">
+    <!-- Project Header -->
+    <div id="project-header" class="project-header">
+        <h1 id="project-title">Loading...</h1>
+        <div class="project-meta">
+            <span id="project-status" class="badge"></span>
+            <span id="project-style" class="style-tag"></span>
+        </div>
+    </div>
+
+    <!-- Scenario Section -->
+    <section class="scenario-section">
+        <h2>Scenario</h2>
+        <div id="scenario-display" class="scenario-display">
+            <p class="help-text">No scenario submitted yet.</p>
+        </div>
+        <div id="moderation-badge" class="moderation-badge" style="display: none;"></div>
+        <div id="rejection-reason" class="rejection-reason" style="display: none;"></div>
+    </section>
+
+    <!-- Segments Section -->
+    <section id="segments-section" class="segments-section" style="display: none;">
+        <h2>Segments</h2>
+        <ol id="segment-list" class="segment-list"></ol>
+    </section>
+
+    <!-- Generation Controls -->
+    <section id="generation-controls" class="generation-controls" style="display: none;">
+        <button id="start-generation" class="btn btn-primary" disabled>
+            🎬 Start Generation
+        </button>
+        <div id="cost-estimate" class="cost-estimate"></div>
+    </section>
+
+    <!-- Progress Section -->
+    <section id="progress-section" class="progress-section" style="display: none;">
+        <h2>Generation Progress</h2>
+        <div id="progress-status" class="progress-status"></div>
+        <div id="clip-progress" class="clip-progress"></div>
+    </section>
+
+    <!-- Video Player Section -->
+    <section id="video-section" class="video-section" style="display: none;">
+        <h2>Final Video</h2>
+        <video id="video-player" controls class="video-player">
+            <source id="video-source" type="video/mp4">
+            Your browser does not support the video tag.
+        </video>
+        <a id="download-btn" class="btn btn-secondary" download>⬇️ Download Video</a>
+    </section>
+
+    <!-- Clip Previews -->
+    <section id="clips-section" class="clips-section" style="display: none;">
+        <h2>Individual Clips</h2>
+        <div id="clip-previews" class="clip-previews"></div>
+    </section>
+</div>
+
+<script>
+(function() {
+    const token = localStorage.getItem('token');
+    if (!token) { window.location.href = '/'; return; }
+
+    const pathParts = window.location.pathname.split('/');
+    const projectId = pathParts[pathParts.length - 1];
+    const headers = { 'Authorization': 'Bearer ' + token };
+
+    // Load project details
+    fetch(`/api/projects/${projectId}`, { headers })
+        .then(r => { if (!r.ok) throw new Error('Not found'); return r.json(); })
+        .then(data => {
+            document.getElementById('project-title').textContent = data.title;
+            document.getElementById('project-status').textContent = data.status;
+            document.getElementById('project-status').className = `badge badge-${data.status}`;
+            document.getElementById('project-style').textContent =
+                data.video_style === 'animation' ? '🎨 Animation' : '🎬 Movie-like';
+        })
+        .catch(() => { window.location.href = '/dashboard'; });
+
+    // Load scenario if exists
+    fetch(`/api/projects/${projectId}/scenario`, { headers })
+        .then(r => { if (!r.ok) return null; return r.json(); })
+        .then(data => {
+            if (!data) return;
+
+            document.getElementById('scenario-display').innerHTML =
+                `<p class="scenario-text">${data.text}</p>`;
+
+            const badge = document.getElementById('moderation-badge');
+            badge.style.display = 'inline-block';
+            badge.textContent = data.moderation_status;
+            badge.className = `moderation-badge badge badge-${data.moderation_status}`;
+
+            if (data.rejection_reason) {
+                const reason = document.getElementById('rejection-reason');
+                reason.style.display = 'block';
+                reason.textContent = '⚠️ ' + data.rejection_reason;
+            }
+
+            // Show segments
+            if (data.segments && data.segments.length > 0) {
+                const section = document.getElementById('segments-section');
+                section.style.display = 'block';
+                const list = document.getElementById('segment-list');
+                data.segments.forEach(seg => {
+                    const li = document.createElement('li');
+                    li.className = `segment-item segment-${seg.generation_status}`;
+                    li.innerHTML = `<span class="seg-num">#${seg.sequence_number}</span> ${seg.description}
+                        <span class="seg-status badge badge-${seg.generation_status}">${seg.generation_status}</span>`;
+                    list.appendChild(li);
+                });
+
+                // Enable generation if approved
+                if (data.moderation_status === 'approved') {
+                    document.getElementById('generation-controls').style.display = 'block';
+                    document.getElementById('start-generation').disabled = false;
+                }
+            }
+        });
+
+    // Poll progress for generating projects
+    let pollInterval = null;
+    function pollProgress() {
+        fetch(`/api/projects/${projectId}/status`, { headers })
+            .then(r => r.json())
+            .then(data => {
+                const section = document.getElementById('progress-section');
+                section.style.display = 'block';
+                document.getElementById('progress-status').textContent =
+                    `Status: ${data.status} — Segment ${data.current_segment || '?'} of ${data.total_segments || '?'}`;
+
+                if (data.status === 'completed' || data.status === 'failed') {
+                    clearInterval(pollInterval);
+                    if (data.status === 'completed') {
+                        window.location.reload();
+                    }
+                }
+            });
+    }
+
+    document.getElementById('start-generation')?.addEventListener('click', () => {
+        fetch(`/api/projects/${projectId}/generate`, {
+            method: 'POST',
+            headers
+        }).then(r => {
+            if (r.ok) {
+                pollInterval = setInterval(pollProgress, 5000);
+                pollProgress();
+            }
+        });
+    });
+})();
+</script>
+{% endblock %}
