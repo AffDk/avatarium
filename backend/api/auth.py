@@ -1,20 +1,41 @@
-"""Auth API routes — register, login, me."""
+"""Auth API routes — register, login, Google OAuth, me."""
 
-from fastapi import APIRouter, Depends, HTTPException, status
+import secrets
+
+from authlib.integrations.starlette_client import OAuth
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.config import Config
 
+from backend.config import settings
 from backend.database import get_db
 from backend.schemas.auth import AuthResponse, LoginRequest, RegisterRequest, UserResponse
 from backend.services.auth_service import (
     authenticate_user,
     create_access_token,
     decode_access_token,
+    get_or_create_google_user,
     get_user_by_id,
     register_user,
 )
 
 router = APIRouter(prefix="/api/auth", tags=["Auth"])
+
+security = HTTPBearer(auto_error=False)
+
+# ── Google OAuth via Authlib ────────────────────
+_oauth_config = Config(environ={
+    "GOOGLE_CLIENT_ID": settings.google_client_id,
+    "GOOGLE_CLIENT_SECRET": settings.google_client_secret,
+})
+oauth = OAuth(config=_oauth_config)
+oauth.register(
+    name="google",
+    server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
+    client_kwargs={"scope": "openid email profile"},
+)
 
 security = HTTPBearer(auto_error=False)
 
@@ -102,3 +123,64 @@ async def get_me(
 ) -> UserResponse:
     """Return the currently authenticated user."""
     return current_user
+
+
+# ── Google OAuth endpoints ──────────────────────
+
+
+@router.get("/google")
+async def google_oauth_redirect(request: Request):
+    """Redirect to Google OAuth consent screen."""
+    if not settings.google_client_id:
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="Google OAuth is not configured. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET.",
+        )
+    state = secrets.token_urlsafe(32)
+    request.session["oauth_state"] = state
+    return await oauth.google.authorize_redirect(
+        request,
+        settings.google_redirect_uri,
+        state=state,
+    )
+
+
+@router.get("/google/callback")
+async def google_oauth_callback(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Handle Google OAuth callback — exchange code for token, create/find user, redirect to dashboard."""
+    try:
+        token = await oauth.google.authorize_access_token(request)
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Google authentication failed",
+        )
+
+    userinfo = token.get("userinfo")
+    if userinfo is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not retrieve user info from Google",
+        )
+
+    google_id = userinfo["sub"]
+    email = userinfo["email"]
+    display_name = userinfo.get("name", email.split("@")[0])
+
+    user = await get_or_create_google_user(db, google_id=google_id, email=email, display_name=display_name)
+    await db.commit()
+
+    jwt_token = create_access_token(user.id)
+    response = RedirectResponse(url="/dashboard", status_code=302)
+    response.set_cookie(
+        key="access_token",
+        value=jwt_token,
+        httponly=True,
+        samesite="lax",
+        max_age=settings.jwt_expiration_minutes * 60,
+        secure=settings.app_env != "development",
+    )
+    return response

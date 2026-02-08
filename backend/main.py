@@ -9,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
+from starlette.middleware.sessions import SessionMiddleware
 
 from backend.config import settings
 from backend.database import create_all, dispose_engine
@@ -41,6 +42,9 @@ def create_app() -> FastAPI:
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+    # ── Session middleware (required for OAuth state) ──
+    app.add_middleware(SessionMiddleware, secret_key=settings.app_secret_key)
+
     # ── Static files ────────────────────────────
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
@@ -50,12 +54,14 @@ def create_app() -> FastAPI:
     from backend.api.projects import router as projects_router
     from backend.api.scenarios import router as scenarios_router
     from backend.api.generation import router as generation_router
+    from backend.api.pages import router as pages_router
 
     app.include_router(health_router)
     app.include_router(auth_router)
     app.include_router(projects_router)
     app.include_router(scenarios_router)
     app.include_router(generation_router)
+    app.include_router(pages_router)
 
     return app
 

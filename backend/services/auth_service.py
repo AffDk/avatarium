@@ -96,3 +96,39 @@ async def authenticate_user(
     if not verify_password(password, user.hashed_password):
         return None
     return user
+
+
+async def get_or_create_google_user(
+    db: AsyncSession,
+    google_id: str,
+    email: str,
+    display_name: str,
+) -> User:
+    """Find a user by Google ID or email, or create a new one.
+
+    If the user exists by email but has no google_id yet, link the account.
+    """
+    # Try by google_id first
+    result = await db.execute(select(User).where(User.google_id == google_id))
+    user = result.scalar_one_or_none()
+    if user is not None:
+        return user
+
+    # Try by email (link existing account)
+    user = await get_user_by_email(db, email)
+    if user is not None:
+        user.google_id = google_id
+        user.email_verified = True
+        await db.flush()
+        return user
+
+    # Create new user
+    user = User(
+        email=email,
+        display_name=display_name,
+        google_id=google_id,
+        email_verified=True,
+    )
+    db.add(user)
+    await db.flush()
+    return user

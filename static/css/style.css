@@ -263,6 +263,16 @@ body {
     min-height: 120px;
 }
 
+.form-error {
+    color: #dc2626;
+    font-size: 0.875rem;
+    padding: 0.5rem 0.75rem;
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    border-radius: var(--radius);
+    margin-bottom: 0.5rem;
+}
+
 /* ── Cards ──────────────────────────────────────── */
 .card {
     background: var(--color-surface);
