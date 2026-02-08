@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard — Avatarium{% endblock %}
+
+{% block content %}
+<div class="dashboard">
+    <div class="dashboard-header">
+        <h1>My Projects</h1>
+        <a href="/new-project" class="btn btn-primary">+ New Project</a>
+    </div>
+
+    <div id="project-list" class="project-grid">
+        <!-- Populated by JavaScript -->
+    </div>
+
+    <div id="empty-state" class="empty-state" style="display: none;">
+        <div class="empty-icon">🎬</div>
+        <h2>No projects yet</h2>
+        <p>Create your first avatar video project to get started.</p>
+        <a href="/new-project" class="btn btn-primary">Create Project</a>
+    </div>
+</div>
+
+<script>
+(function() {
+    const token = localStorage.getItem('token');
+    if (!token) {
+        window.location.href = '/';
+        return;
+    }
+
+    fetch('/api/projects', {
+        headers: { 'Authorization': 'Bearer ' + token }
+    })
+    .then(r => r.json())
+    .then(data => {
+        const list = document.getElementById('project-list');
+        const empty = document.getElementById('empty-state');
+
+        if (!data.items || data.items.length === 0) {
+            list.style.display = 'none';
+            empty.style.display = 'block';
+            return;
+        }
+
+        data.items.forEach(project => {
+            const card = document.createElement('div');
+            card.className = 'project-card';
+            card.innerHTML = `
+                <h3>${project.title}</h3>
+                <div class="project-meta">
+                    <span class="badge badge-${project.status}">${project.status}</span>
+                    <span class="style-tag">${project.video_style === 'animation' ? '🎨 Animation' : '🎬 Movie-like'}</span>
+                </div>
+                <p class="project-date">Created: ${new Date(project.created_at).toLocaleDateString()}</p>
+                <a href="/projects/${project.id}" class="btn btn-secondary">Open</a>
+            `;
+            list.appendChild(card);
+        });
+    })
+    .catch(() => {
+        window.location.href = '/';
+    });
+})();
+</script>
+{% endblock %}
