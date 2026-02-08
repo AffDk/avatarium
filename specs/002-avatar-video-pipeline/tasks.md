@@ -53,8 +53,13 @@
 - [ ] T017 [P] Create backend/templates/landing.html extending base.html with sign-in/register forms and hero section
 - [ ] T018 [P] Create static/css/style.css with responsive base styles (mobile-first breakpoints at 768px/1024px, nav, form, button, flash-message, ad-zone, video-player component styles)
 - [ ] T019 Create tests/conftest.py with pytest fixtures: async test client (httpx.AsyncClient), in-memory SQLite test database, test user factory, auth token helper, mock fal_client, mock google-generativeai
+- [ ] T019a [P] Create backend/services/email_service.py with send_verification_email(user_id, email) stub (logs in dev, sends via SMTP/SES in prod), generate_verification_token(user_id) → signed URL token, verify_email_token(token) → user_id. Constitution: "Email verification is required for email/password registrations."
+- [ ] T019b Add email verification endpoints to backend/api/auth.py: POST /api/auth/verify-email (accept token, set User.email_verified=True, 200/400/404), POST /api/auth/resend-verification (re-send email, 200/404). Registration (T012) must send verification email on success.
+- [ ] T019c Create backend/middleware/terms_gate.py middleware/dependency that checks User.terms_accepted_at is non-null before allowing access to any protected endpoint (except GET /api/auth/me, POST /api/auth/terms). Returns 403 with {"detail": "Terms acceptance required"} if not accepted. Constitution: "Terms of Use must be presented and accepted before any platform features are accessible."
+- [ ] T019d Add terms acceptance endpoint to backend/api/auth.py: POST /api/auth/terms (set User.terms_accepted_at=now(), 200/401). Integrate terms_gate dependency into all protected routers.
+- [ ] T019e [P] Add structured security event logging to backend/services/auth_service.py and backend/middleware/rate_limit.py: log failed login attempts, registration failures, token decode failures, rate limit triggers. Use Python logging module with JSON-formatted security events. Constitution: "All security-relevant events are logged."
 
-**Checkpoint**: Foundation ready — auth works, app runs at http://localhost:8000, health endpoint responds, landing page renders. User story implementation can now begin.
+**Checkpoint**: Foundation ready — auth works with email verification and terms gate, app runs at http://localhost:8000, health endpoint responds, landing page renders. User story implementation can now begin.
 
 ---
 
@@ -75,8 +80,8 @@
 
 - [ ] T022 [P] [US1] Create backend/models/project.py with Project (id, user_id FK, title, video_style enum, status enum with transitions, estimated_cost, actual_cost, timestamps), Person (id, project_id FK, name, unique on project_id+name), Photo (id, person_id FK, original_filename, sequence_number, file_path, file_size, mime_type, unique on person_id+sequence_number) per data-model.md
 - [ ] T023 [P] [US1] Create backend/schemas/project.py with Pydantic v2 schemas per contracts/api.yaml: CreateProjectRequest, ProjectResponse, ProjectDetailResponse, ProjectListResponse, PersonResponse, PhotoResponse, PhotoGroupResponse, PhotoUploadResponse
-- [ ] T024 [US1] Create backend/services/upload_service.py with parse_filename(name) → (person_name, sequence_number), validate_file(file) → check size ≤10MB and MIME type, group_files_by_person(files) → dict, save_photo(file, project_id) → Photo, ensuring user-scoped directory structure uploads/{user_id}/{project_id}/
-- [ ] T024a [US1] Add validate_person_references(scenario_text, person_names) → list[str] to backend/services/upload_service.py: case-insensitive substring search for each uploaded person name within scenario text, return list of warnings for referenced names not found in uploads (FR-008)
+- [ ] T024 [US1] Create backend/services/upload_service.py with parse_filename(name) → (person_name, sequence_number), validate_file(file) → check size ≤10MB and MIME type, group_files_by_person(files) → dict, save_photo(file, project_id) → Photo, ensuring user-scoped directory structure uploads/{user_id}/{project_id}/. Include MAX_PHOTOS_PER_PERSON=10 constant and validate_photo_count(existing_count, new_count) that raises ValueError if total would exceed 10. Constitution: "Maximum photos per person: 10 per project."
+- [ ] T024a [US1] Add validate_person_references(scenario_text, person_names) → list[str] to backend/services/upload_service.py: check BOTH directions — (a) warn if uploaded person names are not mentioned in scenario text, (b) warn if scenario mentions names not present in uploads. FR-008 covers both directions.
 - [ ] T025 [US1] Implement backend/api/projects.py with GET /api/projects (paginated, user-scoped), POST /api/projects (201), GET /api/projects/{id} (200/404), DELETE /api/projects/{id} (204/404), GET /api/projects/{id}/photos (grouped by person), POST /api/projects/{id}/photos (multipart upload, 201/400/413), DELETE /api/projects/{id}/photos/{photoId} (204/404) per contracts/api.yaml
 - [ ] T026 [US1] Generate Alembic migration for Project, Person, and Photo tables
 - [ ] T027 [US1] Create backend/templates/dashboard.html extending base.html with project list (title, style, status, date), "New Project" button, empty state message
@@ -223,7 +228,7 @@
 - **US2 (Phase 4)**: Depends on US1 (needs project with scenario)
 - **US3 (Phase 5)**: Depends on US2 (needs approved segments)
 - **US4 (Phase 6)**: Depends on US3 (needs generated clips)
-- **US5 (Phase 7)**: Depends on Foundational only — **can run in parallel with US3/US4**
+- **US5 (Phase 7)**: T052–T054 depend on Foundational only (can start early); **T055 depends on T044 (pipeline_service.py from Phase 5)**
 - **US6 (Phase 8)**: Depends on US2 — **can run in parallel with US3/US4/US5**
 - **Polish (Phase 9)**: Depends on all desired user stories being complete
 

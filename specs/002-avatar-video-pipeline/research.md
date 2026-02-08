@@ -183,3 +183,28 @@ Given the following video scenario, perform TWO tasks:
 - macOS: `brew install ffmpeg`
 - Linux: `apt-get install ffmpeg`
 - Docker: `RUN apt-get update && apt-get install -y ffmpeg`
+
+## Decision 10: Password Hashing — Direct bcrypt (not passlib)
+
+**Decision**: Use the `bcrypt` library directly instead of `passlib[bcrypt]`.
+
+**Rationale**:
+- `passlib.handlers.bcrypt` is incompatible with `bcrypt>=5.0` — `CryptContext.hash()` raises `ValueError` at runtime
+- passlib has not been updated to fix this and appears unmaintained
+- Direct `bcrypt.hashpw()` / `bcrypt.checkpw()` provides identical security
+- Eliminates an unnecessary abstraction layer
+- `passlib[bcrypt]` removed from `pyproject.toml` dependencies
+
+**Migration**:
+```python
+# Before (passlib)
+from passlib.context import CryptContext
+pwd_context = CryptContext(schemes=["bcrypt"])
+hashed = pwd_context.hash(password)
+valid = pwd_context.verify(password, hashed)
+
+# After (direct bcrypt)
+import bcrypt
+hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+valid = bcrypt.checkpw(password.encode(), hashed.encode())
+```

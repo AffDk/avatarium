@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from backend.api.auth import get_current_user
+from backend.api.dependencies import get_user_project
 from backend.database import get_db
 from backend.models.project import Project
 from backend.models.scenario import ModerationStatus, Scenario, Segment
@@ -23,21 +24,6 @@ from backend.services.moderation_service import moderate_and_split
 router = APIRouter(prefix="/api/projects", tags=["Scenarios"])
 
 
-async def _get_user_project(
-    project_id: uuid.UUID,
-    user_id: uuid.UUID,
-    db: AsyncSession,
-) -> Project:
-    """Fetch a project ensuring ownership."""
-    result = await db.execute(
-        select(Project).where(Project.id == project_id, Project.user_id == user_id)
-    )
-    project = result.scalar_one_or_none()
-    if project is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
-    return project
-
-
 @router.put("/{project_id}/scenario", response_model=ScenarioDetailResponse)
 async def submit_scenario(
     project_id: uuid.UUID,
@@ -46,7 +32,7 @@ async def submit_scenario(
     db: AsyncSession = Depends(get_db),
 ) -> ScenarioDetailResponse:
     """Submit or re-submit a scenario. Triggers moderation + splitting via Gemini."""
-    project = await _get_user_project(project_id, current_user.id, db)
+    project = await get_user_project(project_id, current_user.id, db, load_persons=False)
 
     # Check if scenario already exists — if so, delete old one for re-submission
     result = await db.execute(
@@ -107,7 +93,7 @@ async def get_scenario(
     db: AsyncSession = Depends(get_db),
 ) -> ScenarioDetailResponse:
     """Get scenario with moderation status and segments."""
-    project = await _get_user_project(project_id, current_user.id, db)
+    project = await get_user_project(project_id, current_user.id, db, load_persons=False)
 
     result = await db.execute(
         select(Scenario)

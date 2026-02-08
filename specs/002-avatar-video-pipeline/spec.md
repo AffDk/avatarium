@@ -142,8 +142,8 @@ Before generation begins, the user can review the scenario segments produced by 
 #### Scenario Input
 
 - **FR-006**: System MUST provide a text area for users to write a video scenario describing how the named persons interact.
-- **FR-007**: System MUST accept scenarios of at least 2,000 characters in length.
-- **FR-008**: System MUST validate that at least one person referenced in the scenario matches an uploaded person name.
+- **FR-007**: System MUST support scenarios up to 10,000 characters in length.
+- **FR-008**: System MUST validate person references in both directions: (a) warn if an uploaded person name is not mentioned in the scenario, and (b) warn if the scenario references a person name not present in the uploads.
 
 #### Video Style Selection
 
@@ -165,7 +165,7 @@ Before generation begins, the user can review the scenario segments produced by 
 
 #### Iterative Generation Pipeline
 
-- **FR-018**: For the first segment, system MUST generate a still image based on the uploaded person photos and the segment description, in the selected visual style.
+- **FR-018**: For the first segment, system MUST generate a still image by constructing a text prompt that incorporates the uploaded person names and the segment description in the selected visual style. (Note: the chosen model, Qwen Image, is text-to-image; person names from uploads are included in the prompt rather than raw photos.)
 - **FR-019**: System MUST convert the generated image into a ~5-second video clip guided by the segment description.
 - **FR-020**: System MUST extract the last frame of each generated video clip for use as the starting image of the next clip.
 - **FR-021**: For each subsequent segment, system MUST generate the next video clip using the last frame from the previous clip and the current segment description.
@@ -182,7 +182,7 @@ Before generation begins, the user can review the scenario segments produced by 
 
 - **FR-027**: System MUST use the lowest-cost AI models available that meet minimum quality requirements for each pipeline step (image generation, video generation).
 - **FR-028**: System MUST display an estimated cost to the user before generation starts, based on the number of segments.
-- **FR-029**: System MUST select the lowest-cost resolution option that maintains acceptable quality (e.g., 480p for video generation).
+- **FR-029**: System MUST default to 480p resolution (854×480) for video generation to minimize cost while maintaining acceptable visual quality.
 
 #### Segment Review (Optional Enhancement)
 

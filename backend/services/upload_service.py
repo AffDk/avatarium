@@ -8,6 +8,7 @@ from typing import Any
 ALLOWED_EXTENSIONS = {"jpg", "jpeg", "png", "webp"}
 ALLOWED_MIME_TYPES = {"image/jpeg", "image/png", "image/webp"}
 MAX_FILE_SIZE = 10_485_760  # 10 MB
+MAX_PHOTOS_PER_PERSON = 10  # Constitution: max 10 photos per person per project
 
 # Pattern: <personName>_<sequenceNumber>.<extension>
 FILENAME_PATTERN = re.compile(
@@ -121,6 +122,23 @@ def validate_person_references(
             )
 
     return warnings
+
+
+def validate_photo_count(existing_count: int, new_count: int, person_name: str) -> None:
+    """Validate that adding new_count photos won't exceed the per-person limit.
+
+    Constitution: Maximum photos per person: 10 per project.
+
+    Raises:
+        ValueError: If total would exceed MAX_PHOTOS_PER_PERSON.
+    """
+    total = existing_count + new_count
+    if total > MAX_PHOTOS_PER_PERSON:
+        raise ValueError(
+            f"Person '{person_name}' would have {total} photos "
+            f"(limit: {MAX_PHOTOS_PER_PERSON}). "
+            f"Currently has {existing_count}, attempting to add {new_count}."
+        )
 
 
 async def save_photo_file(

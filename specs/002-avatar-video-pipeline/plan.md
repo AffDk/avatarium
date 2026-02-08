@@ -11,9 +11,10 @@ Build a web application where users upload named photos of people, write a video
 
 **Language/Version**: Python 3.12+
 **Package Manager**: uv (for virtual environment creation and package management)
-**Primary Dependencies**: FastAPI, Uvicorn, Jinja2, python-multipart, google-generativeai, fal-client, ffmpeg-python, python-jose[cryptography], passlib[bcrypt], python-dotenv, SQLAlchemy, aiosqlite, asyncpg, httpx, Authlib, SlowAPI, pydantic-settings
+**Primary Dependencies**: FastAPI, Uvicorn, Jinja2, python-multipart, google-generativeai, fal-client, bcrypt, python-jose[cryptography], python-dotenv, SQLAlchemy, aiosqlite, asyncpg, httpx, Authlib, SlowAPI, pydantic-settings
 **Storage**: SQLite (dev) / PostgreSQL (prod) via SQLAlchemy async; file storage on local disk (dev) / cloud object storage (prod)
 **Testing**: pytest, pytest-asyncio, pytest-cov, httpx (for async test client)
+**FFmpeg**: System-level dependency called via `subprocess.run` (not `ffmpeg-python` wrapper) for video concatenation and last-frame extraction
 **Target Platform**: Linux server (deployment), Windows/macOS (development)
 **Project Type**: Web application (backend API + server-rendered frontend)
 **Performance Goals**: Handle 50 concurrent users; API responses <500ms for non-generation endpoints; generation pipeline progress updates via polling or SSE
@@ -167,3 +168,10 @@ avatarium/
 ## Complexity Tracking
 
 > No constitution violations — no justifications needed.
+
+### Design Deviations Log
+
+| # | Original Decision | Deviation | Reason |
+|---|---|---|---|
+| 1 | passlib[bcrypt] for password hashing | Direct `bcrypt` library (bcrypt.hashpw/checkpw) | passlib is incompatible with bcrypt≥5.0; CryptContext raises ValueError. Direct bcrypt works identically. |
+| 2 | ffmpeg-python wrapper for video ops | subprocess.run with raw ffmpeg CLI | Simpler, fewer dependencies, no wrapper overhead. ffmpeg-python is removed from deps. |

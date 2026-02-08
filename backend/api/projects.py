@@ -5,9 +5,9 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from backend.api.auth import get_current_user
+from backend.api.dependencies import get_user_project
 from backend.database import get_db
 from backend.models.project import Person, Photo, Project
 from backend.schemas.auth import UserResponse
@@ -22,32 +22,14 @@ from backend.schemas.project import (
     ProjectResponse,
 )
 from backend.services.upload_service import (
+    MAX_PHOTOS_PER_PERSON,
     parse_filename,
     save_photo_file,
     validate_file,
+    validate_photo_count,
 )
 
 router = APIRouter(prefix="/api/projects", tags=["Projects"])
-
-
-# ── Helpers ──────────────────────────────────────────────
-
-
-async def _get_user_project(
-    project_id: uuid.UUID,
-    user_id: uuid.UUID,
-    db: AsyncSession,
-) -> Project:
-    """Fetch a project ensuring it belongs to the current user."""
-    result = await db.execute(
-        select(Project)
-        .options(selectinload(Project.persons).selectinload(Person.photos))
-        .where(Project.id == project_id, Project.user_id == user_id)
-    )
-    project = result.scalar_one_or_none()
-    if project is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
-    return project
 
 
 # ── Project CRUD ─────────────────────────────────────────
@@ -111,7 +93,7 @@ async def get_project(
     db: AsyncSession = Depends(get_db),
 ) -> ProjectDetailResponse:
     """Get project detail with persons and photos."""
-    project = await _get_user_project(project_id, current_user.id, db)
+    project = await get_user_project(project_id, current_user.id, db)
 
     persons = [
         PersonResponse(
@@ -135,7 +117,7 @@ async def delete_project(
     db: AsyncSession = Depends(get_db),
 ) -> None:
     """Delete a project and all associated data (cascade)."""
-    project = await _get_user_project(project_id, current_user.id, db)
+    project = await get_user_project(project_id, current_user.id, db)
     await db.delete(project)
     await db.flush()
 
@@ -155,13 +137,19 @@ async def upload_photos(
     db: AsyncSession = Depends(get_db),
 ) -> PhotoUploadResponse:
     """Upload photos for a project. Filenames must follow <person>_<seq>.<ext> convention."""
-    project = await _get_user_project(project_id, current_user.id, db)
+    project = await get_user_project(project_id, current_user.id, db)
 
     uploaded_photos: list[Photo] = []
     persons_created: set[str] = set()
 
     # Build a map of existing persons for this project
+    # Persons loaded via selectinload already have .photos populated
     existing_persons: dict[str, Person] = {p.name: p for p in project.persons}
+
+    # Pre-compute existing photo counts (only for already-loaded persons)
+    person_photo_counts: dict[str, int] = {
+        p.name: len(p.photos) for p in project.persons
+    }
 
     for file in photos:
         if file.filename is None:
@@ -192,8 +180,24 @@ async def upload_photos(
             await db.flush()
             existing_persons[person_name] = person
             persons_created.add(person_name)
+            person_photo_counts[person_name] = 0
         else:
             person = existing_persons[person_name]
+
+        # Enforce max photos per person (Constitution: max 10)
+        existing_count = person_photo_counts.get(person_name, 0)
+        # Count how many photos for this person are already in this batch
+        batch_count = sum(
+            1 for p in uploaded_photos if p.person_id == person.id
+        )
+        try:
+            validate_photo_count(
+                existing_count + batch_count, 1, person_name
+            )
+        except ValueError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)
+            )
 
         # Save file to disk
         file_path = await save_photo_file(
@@ -230,7 +234,7 @@ async def list_photos(
     db: AsyncSession = Depends(get_db),
 ) -> PhotoGroupResponse:
     """List photos grouped by person."""
-    project = await _get_user_project(project_id, current_user.id, db)
+    project = await get_user_project(project_id, current_user.id, db)
 
     groups = []
     for person in project.persons:
@@ -258,7 +262,7 @@ async def delete_photo(
 ) -> None:
     """Delete a specific photo."""
     # Verify project ownership
-    project = await _get_user_project(project_id, current_user.id, db)
+    project = await get_user_project(project_id, current_user.id, db)
 
     # Find the photo within this project's persons
     result = await db.execute(
