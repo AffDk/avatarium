@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Avatarium{% endblock %}</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    {% block head %}{% endblock %}
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="navbar">
+        <div class="nav-container">
+            <a href="/" class="nav-brand">🎬 Avatarium</a>
+            <div class="nav-links">
+                {% if user %}
+                    <a href="/dashboard" class="nav-link">Dashboard</a>
+                    <span class="nav-user">{{ user.display_name }}</span>
+                    <a href="/logout" class="nav-link nav-link--secondary">Logout</a>
+                {% else %}
+                    <a href="/login" class="nav-link">Sign In</a>
+                    <a href="/register" class="nav-link nav-link--primary">Get Started</a>
+                {% endif %}
+            </div>
+        </div>
+    </nav>
+
+    <!-- Flash Messages -->
+    {% if messages %}
+    <div class="flash-container">
+        {% for msg in messages %}
+        <div class="flash flash--{{ msg.type }}">
+            {{ msg.text }}
+            <button class="flash-close" onclick="this.parentElement.remove()">&times;</button>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <!-- Main Content -->
+    <main class="main-content">
+        {% block content %}{% endblock %}
+    </main>
+
+    <!-- Footer with Ad Zones -->
+    <footer class="footer">
+        <div class="footer-container">
+            <div class="ad-zone ad-zone--footer">
+                <!-- Ad placement zone -->
+            </div>
+            <p class="footer-text">
+                &copy; 2026 Avatarium &middot;
+                <a href="/terms">Terms of Use</a>
+            </p>
+        </div>
+    </footer>
+
+    {% block scripts %}{% endblock %}
+</body>
+</html>

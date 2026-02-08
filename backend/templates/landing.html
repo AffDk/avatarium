@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+
+{% block title %}Avatarium — AI Avatar Videos{% endblock %}
+
+{% block content %}
+<section class="hero">
+    <div class="hero-content">
+        <h1 class="hero-title">Create AI Avatar Videos</h1>
+        <p class="hero-subtitle">
+            Upload photos of people, write a scenario, and watch your story come to life
+            with AI-generated video — starting at just $0.22 per project.
+        </p>
+        <div class="hero-actions">
+            <a href="/register" class="btn btn--primary btn--lg">Get Started Free</a>
+            <a href="#how-it-works" class="btn btn--outline btn--lg">How It Works</a>
+        </div>
+    </div>
+</section>
+
+<section id="how-it-works" class="features">
+    <h2 class="section-title">How It Works</h2>
+    <div class="feature-grid">
+        <div class="feature-card">
+            <div class="feature-icon">📸</div>
+            <h3>1. Upload Photos</h3>
+            <p>Upload named photos of people using the <code>personName_1.jpg</code> format.</p>
+        </div>
+        <div class="feature-card">
+            <div class="feature-icon">✍️</div>
+            <h3>2. Write Your Scenario</h3>
+            <p>Describe your video scene. Our AI checks content safety automatically.</p>
+        </div>
+        <div class="feature-card">
+            <div class="feature-icon">🎬</div>
+            <h3>3. Generate Video</h3>
+            <p>Choose Animation or Movie-like style. AI generates clips and combines them.</p>
+        </div>
+        <div class="feature-card">
+            <div class="feature-icon">⬇️</div>
+            <h3>4. Download & Share</h3>
+            <p>Preview your video inline and download the final result.</p>
+        </div>
+    </div>
+</section>
+
+<!-- Auth Forms -->
+<section class="auth-section" id="auth">
+    <div class="auth-forms">
+        <!-- Login Form -->
+        <div class="auth-card" id="login-form">
+            <h2>Sign In</h2>
+            <form method="post" action="/api/auth/login" class="form">
+                <div class="form-group">
+                    <label for="login-email">Email</label>
+                    <input type="email" id="login-email" name="email" required placeholder="you@example.com">
+                </div>
+                <div class="form-group">
+                    <label for="login-password">Password</label>
+                    <input type="password" id="login-password" name="password" required minlength="8">
+                </div>
+                <button type="submit" class="btn btn--primary btn--full">Sign In</button>
+            </form>
+            <div class="auth-divider"><span>or</span></div>
+            <a href="/api/auth/google" class="btn btn--google btn--full">
+                Continue with Google
+            </a>
+            <p class="auth-switch">
+                Don't have an account? <a href="#register-form" onclick="toggleAuth()">Register</a>
+            </p>
+        </div>
+
+        <!-- Register Form -->
+        <div class="auth-card hidden" id="register-form">
+            <h2>Create Account</h2>
+            <form method="post" action="/api/auth/register" class="form">
+                <div class="form-group">
+                    <label for="reg-name">Display Name</label>
+                    <input type="text" id="reg-name" name="display_name" required maxlength="100">
+                </div>
+                <div class="form-group">
+                    <label for="reg-email">Email</label>
+                    <input type="email" id="reg-email" name="email" required placeholder="you@example.com">
+                </div>
+                <div class="form-group">
+                    <label for="reg-password">Password</label>
+                    <input type="password" id="reg-password" name="password" required minlength="8" maxlength="128">
+                </div>
+                <button type="submit" class="btn btn--primary btn--full">Create Account</button>
+            </form>
+            <div class="auth-divider"><span>or</span></div>
+            <a href="/api/auth/google" class="btn btn--google btn--full">
+                Continue with Google
+            </a>
+            <p class="auth-switch">
+                Already have an account? <a href="#login-form" onclick="toggleAuth()">Sign In</a>
+            </p>
+        </div>
+    </div>
+</section>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+function toggleAuth() {
+    document.getElementById('login-form').classList.toggle('hidden');
+    document.getElementById('register-form').classList.toggle('hidden');
+}
+</script>
+{% endblock %}
