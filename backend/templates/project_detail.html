@@ -13,14 +13,58 @@
         </div>
     </div>
 
+    <!-- Photo Upload Section (shown when project needs photos) -->
+    <section id="upload-section" class="upload-section" style="display: none;">
+        <h2>Upload Photos</h2>
+        <p class="help-text">
+            Filename format: <code>&lt;personName&gt;_&lt;number&gt;.jpg</code>
+            (e.g., <code>alice_1.jpg</code>, <code>alice_2.png</code>, <code>bob_1.webp</code>)
+        </p>
+
+        <div id="dropzone" class="dropzone">
+            <div class="dropzone-content">
+                <span class="dropzone-icon">📸</span>
+                <p>Drag & drop photos here or
+                    <button type="button" id="browse-btn" class="link"
+                        style="background:none;border:none;cursor:pointer;color:inherit;text-decoration:underline;font:inherit;padding:0;">
+                        browse
+                    </button>
+                </p>
+                <input type="file" id="file-input" multiple accept="image/jpeg,image/png,image/webp" style="display:none;">
+            </div>
+        </div>
+
+        <div id="file-preview" class="file-preview"></div>
+        <div id="person-groups" class="person-groups"></div>
+
+        <!-- Existing photos -->
+        <div id="existing-photos" style="display: none;">
+            <h3>Uploaded Photos</h3>
+            <div id="photo-list" class="person-groups"></div>
+        </div>
+
+        <button id="upload-btn" class="btn btn-primary" disabled>Upload Photos</button>
+    </section>
+
     <!-- Scenario Section -->
     <section class="scenario-section">
         <h2>Scenario</h2>
-        <div id="scenario-display" class="scenario-display">
+        <div id="scenario-display">
             <p class="help-text">No scenario submitted yet.</p>
         </div>
         <div id="moderation-badge" class="moderation-badge" style="display: none;"></div>
         <div id="rejection-reason" class="rejection-reason" style="display: none;"></div>
+
+        <!-- Scenario Input (shown when no scenario yet or rejected) -->
+        <div id="scenario-form" style="display: none;">
+            <div class="form-group">
+                <label for="scenario">Write Your Scenario <span class="char-count" id="char-count">0 / 10000</span></label>
+                <textarea id="scenario" name="scenario" class="form-input"
+                          maxlength="10000" rows="6"
+                          placeholder="Describe the scene you want to generate..."></textarea>
+            </div>
+            <button id="submit-scenario" class="btn btn-primary">Submit Scenario</button>
+        </div>
     </section>
 
     <!-- Segments Section -->
@@ -63,14 +107,31 @@
 
 <script>
 (function() {
-    const token = localStorage.getItem('token');
-    if (!token) { window.location.href = '/'; return; }
+    // ── Token helper ─────────────────────────────
+    function getCookie(name) {
+        const match = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
+        return match ? decodeURIComponent(match[1]) : null;
+    }
+    const token = getCookie('access_token');
+    if (!token) { window.location.href = '/login'; return; }
 
     const pathParts = window.location.pathname.split('/');
     const projectId = pathParts[pathParts.length - 1];
     const headers = { 'Authorization': 'Bearer ' + token };
 
-    // Load project details
+    // ── Filename validation helpers ──────────────
+    const FILENAME_REGEX = /^[a-zA-Z0-9]+_\d+\.\w+$/;
+    const ALLOWED_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'webp']);
+    const MAX_FILE_SIZE = 10 * 1024 * 1024;
+    let selectedFiles = [];
+
+    function parseFilename(name) {
+        const match = name.match(/^([a-zA-Z0-9]+)_(\d+)\.(\w+)$/);
+        if (!match) return null;
+        return { person: match[1].toLowerCase(), seq: parseInt(match[2], 10), ext: match[3].toLowerCase() };
+    }
+
+    // ── Load project details ─────────────────────
     fetch(`/api/projects/${projectId}`, { headers })
         .then(r => { if (!r.ok) throw new Error('Not found'); return r.json(); })
         .then(data => {
@@ -79,14 +140,127 @@
             document.getElementById('project-status').className = `badge badge-${data.status}`;
             document.getElementById('project-style').textContent =
                 data.video_style === 'animation' ? '🎨 Animation' : '🎬 Movie-like';
+
+            // Show upload section for projects that are still in setup
+            if (data.status === 'draft' || data.status === 'created' || data.status === 'photos_uploaded') {
+                document.getElementById('upload-section').style.display = 'block';
+            }
         })
         .catch(() => { window.location.href = '/dashboard'; });
 
-    // Load scenario if exists
+    // ── Load existing photos ─────────────────────
+    fetch(`/api/projects/${projectId}/photos`, { headers })
+        .then(r => { if (!r.ok) return null; return r.json(); })
+        .then(data => {
+            if (!data || !data.persons || data.persons.length === 0) return;
+            const container = document.getElementById('existing-photos');
+            const list = document.getElementById('photo-list');
+            container.style.display = 'block';
+            list.innerHTML = data.persons.map(p =>
+                `<div class="person-group"><strong>${p.name}</strong>: ${p.photo_count} photo(s)</div>`
+            ).join('');
+        });
+
+    // ── Drag & drop + file input ─────────────────
+    const dropzone = document.getElementById('dropzone');
+    const fileInput = document.getElementById('file-input');
+    const filePreview = document.getElementById('file-preview');
+    const personGroups = document.getElementById('person-groups');
+    const uploadBtn = document.getElementById('upload-btn');
+
+    if (dropzone) {
+        dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('dragover'); });
+        dropzone.addEventListener('dragleave', () => { dropzone.classList.remove('dragover'); });
+        dropzone.addEventListener('drop', (e) => { e.preventDefault(); dropzone.classList.remove('dragover'); handleFiles(Array.from(e.dataTransfer.files)); });
+        dropzone.addEventListener('click', () => { if (fileInput) fileInput.click(); });
+        dropzone.style.cursor = 'pointer';
+    }
+    if (fileInput) {
+        fileInput.addEventListener('change', () => { handleFiles(Array.from(fileInput.files)); });
+    }
+    const browseBtn = document.getElementById('browse-btn');
+    if (browseBtn && fileInput) {
+        browseBtn.addEventListener('click', () => { fileInput.click(); });
+    }
+
+    function handleFiles(files) {
+        selectedFiles = [];
+        const previewHtml = [];
+        const groups = {};
+        for (const file of files) {
+            if (!FILENAME_REGEX.test(file.name)) {
+                previewHtml.push(`<div class="file-item file-invalid">❌ ${file.name} — Must match &lt;person&gt;_&lt;number&gt;.&lt;ext&gt;</div>`);
+                continue;
+            }
+            const ext = file.name.split('.').pop().toLowerCase();
+            if (!ALLOWED_EXTENSIONS.has(ext)) {
+                previewHtml.push(`<div class="file-item file-invalid">❌ ${file.name} — Unsupported extension</div>`);
+                continue;
+            }
+            if (file.size > MAX_FILE_SIZE) {
+                previewHtml.push(`<div class="file-item file-invalid">❌ ${file.name} — Exceeds 10 MB</div>`);
+                continue;
+            }
+            const parsed = parseFilename(file.name);
+            if (!parsed) continue;
+            previewHtml.push(`<div class="file-item file-valid">✅ ${file.name} → ${parsed.person} #${parsed.seq}</div>`);
+            if (!groups[parsed.person]) groups[parsed.person] = [];
+            groups[parsed.person].push(file);
+            selectedFiles.push(file);
+        }
+        if (filePreview) filePreview.innerHTML = previewHtml.join('');
+        if (personGroups) {
+            personGroups.innerHTML = Object.entries(groups).map(([person, files]) =>
+                `<div class="person-group"><strong>${person}</strong>: ${files.length} photo(s)</div>`
+            ).join('');
+        }
+        if (uploadBtn) uploadBtn.disabled = selectedFiles.length === 0;
+    }
+
+    // ── Upload photos ────────────────────────────
+    if (uploadBtn) {
+        uploadBtn.addEventListener('click', async () => {
+            if (selectedFiles.length === 0) return;
+            const formData = new FormData();
+            selectedFiles.forEach(file => formData.append('photos', file));
+            uploadBtn.disabled = true;
+            uploadBtn.textContent = 'Uploading...';
+            try {
+                const resp = await fetch(`/api/projects/${projectId}/photos`, {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token },
+                    body: formData
+                });
+                if (resp.ok) {
+                    const data = await resp.json();
+                    alert(`Uploaded ${data.uploaded} photo(s). Persons: ${data.persons_created.join(', ')}`);
+                    // Show scenario form after upload
+                    document.getElementById('scenario-form').style.display = 'block';
+                    uploadBtn.textContent = 'Upload More Photos';
+                    window.location.reload();
+                } else {
+                    const err = await resp.json();
+                    alert(err.detail || 'Upload failed');
+                    uploadBtn.textContent = 'Upload Photos';
+                }
+            } catch (err) {
+                alert('Network error: ' + err.message);
+                uploadBtn.textContent = 'Upload Photos';
+            } finally {
+                uploadBtn.disabled = false;
+            }
+        });
+    }
+
+    // ── Load scenario if exists ──────────────────
     fetch(`/api/projects/${projectId}/scenario`, { headers })
         .then(r => { if (!r.ok) return null; return r.json(); })
         .then(data => {
-            if (!data) return;
+            if (!data) {
+                // No scenario yet — show the form
+                document.getElementById('scenario-form').style.display = 'block';
+                return;
+            }
 
             document.getElementById('scenario-display').innerHTML =
                 `<p class="scenario-text">${data.text}</p>`;
@@ -100,6 +274,8 @@
                 const reason = document.getElementById('rejection-reason');
                 reason.style.display = 'block';
                 reason.textContent = '⚠️ ' + data.rejection_reason;
+                // Allow resubmission if rejected
+                document.getElementById('scenario-form').style.display = 'block';
             }
 
             // Show segments
@@ -123,7 +299,45 @@
             }
         });
 
-    // Poll progress for generating projects
+    // ── Submit scenario ──────────────────────────
+    const submitBtn = document.getElementById('submit-scenario');
+    const scenarioInput = document.getElementById('scenario');
+    const charCount = document.getElementById('char-count');
+
+    if (scenarioInput && charCount) {
+        scenarioInput.addEventListener('input', () => {
+            charCount.textContent = `${scenarioInput.value.length} / 10000`;
+        });
+    }
+
+    if (submitBtn) {
+        submitBtn.addEventListener('click', async () => {
+            const text = scenarioInput.value.trim();
+            if (!text) { alert('Please write a scenario first.'); return; }
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Submitting...';
+            try {
+                const resp = await fetch(`/api/projects/${projectId}/scenario`, {
+                    method: 'PUT',
+                    headers: { ...headers, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text })
+                });
+                if (resp.ok) {
+                    window.location.reload();
+                } else {
+                    const err = await resp.json();
+                    alert(err.detail || 'Failed to submit scenario');
+                }
+            } catch (err) {
+                alert('Network error: ' + err.message);
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Submit Scenario';
+            }
+        });
+    }
+
+    // ── Poll progress for generating projects ────
     let pollInterval = null;
     function pollProgress() {
         fetch(`/api/projects/${projectId}/status`, { headers })

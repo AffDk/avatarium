@@ -34,8 +34,13 @@ function parseFilename(name) {
 
 // ── Token Management ─────────────────────────────────────
 
+function getCookie(name) {
+    const match = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
+    return match ? decodeURIComponent(match[1]) : null;
+}
+
 function getToken() {
-    return localStorage.getItem('token');
+    return getCookie('access_token');
 }
 
 function authHeaders() {
@@ -67,9 +72,8 @@ if (projectForm) {
 
             if (resp.ok) {
                 const data = await resp.json();
-                currentProjectId = data.id;
-                projectForm.style.display = 'none';
-                uploadSection.style.display = 'block';
+                // Redirect to project detail page for upload & scenario
+                window.location.href = `/projects/${data.id}`;
             } else {
                 const err = await resp.json();
                 alert(err.detail || 'Failed to create project');

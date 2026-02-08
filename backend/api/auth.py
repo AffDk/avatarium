@@ -178,7 +178,7 @@ async def google_oauth_callback(
     response.set_cookie(
         key="access_token",
         value=jwt_token,
-        httponly=True,
+        httponly=False,
         samesite="lax",
         max_age=settings.jwt_expiration_minutes * 60,
         secure=settings.app_env != "development",

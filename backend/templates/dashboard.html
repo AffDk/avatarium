@@ -23,9 +23,18 @@
 
 <script>
 (function() {
-    const token = localStorage.getItem('token');
+    // Helper: read a cookie value by name
+    function getCookie(name) {
+        const match = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
+        return match ? decodeURIComponent(match[1]) : null;
+    }
+
+    const token = getCookie('access_token');
+    // Server-side already redirects unauthenticated users to /login,
+    // so if we still have no token at this point, just show the empty state.
     if (!token) {
-        window.location.href = '/';
+        document.getElementById('project-list').style.display = 'none';
+        document.getElementById('empty-state').style.display = 'block';
         return;
     }
 
@@ -59,7 +68,9 @@
         });
     })
     .catch(() => {
-        window.location.href = '/';
+        // Show empty state on network error instead of redirect loop
+        document.getElementById('project-list').style.display = 'none';
+        document.getElementById('empty-state').style.display = 'block';
     });
 })();
 </script>
