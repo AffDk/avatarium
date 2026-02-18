@@ -6,6 +6,7 @@ Model is configurable via GEMINI_MODEL env var (default: gemini-2.5-flash).
 """
 
 import json
+import logging
 import re
 from typing import Any
 
@@ -15,6 +16,8 @@ from backend.config import settings
 
 # Configure Gemini on module load
 genai.configure(api_key=settings.gemini_api_key)
+
+logger = logging.getLogger(__name__)
 
 MODERATION_SPLIT_PROMPT = """You are a content moderation and scenario splitting assistant for an AI video generation platform.
 
@@ -214,5 +217,26 @@ async def moderate_and_split(
         scenario_text=scenario_text,
         characters_section=characters_section,
     )
+
+    logger.info(
+        "Sending moderation request to Gemini | "
+        "scenario_length=%d person_names=%s",
+        len(scenario_text),
+        person_names or [],
+    )
+    logger.info("Gemini prompt:\n%s", prompt)
+
     raw_response = await _call_gemini(prompt)
-    return parse_gemini_response(raw_response, person_names=person_names)
+
+    logger.debug("Gemini raw response:\n%s", raw_response)
+
+    result = parse_gemini_response(raw_response, person_names=person_names)
+
+    logger.info(
+        "Gemini moderation result | approved=%s segments=%d characters=%s",
+        result["approved"],
+        len(result.get("segments", [])),
+        list(result.get("characters", {}).keys()),
+    )
+
+    return result

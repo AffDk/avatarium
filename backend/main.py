@@ -13,6 +13,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from backend.config import settings
 from backend.database import create_all, dispose_engine
+from backend.logging_config import setup_logging
 from backend.middleware.rate_limit import limiter
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -22,7 +23,8 @@ STATIC_DIR = BASE_DIR.parent / "static"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Startup: create tables (dev). Shutdown: dispose engine."""
+    """Startup: create tables (dev), configure logging. Shutdown: dispose engine."""
+    setup_logging()
     if settings.is_development:
         await create_all()
     yield
