@@ -43,9 +43,10 @@ async def run_pipeline(
     Path(clips_dir).mkdir(parents=True, exist_ok=True)
 
     # Step 1: Generate initial image from first segment
+    # Characters manifest is now embedded in segment descriptions by the splitting AI.
+    # The description already contains visual traits, so no manual concatenation needed.
     first_segment = segments[0]
-    person_str = ", ".join(person_names) if person_names else ""
-    initial_prompt = f"{first_segment['description']}. Characters: {person_str}"
+    initial_prompt = first_segment["description"]
 
     current_image = await generate_initial_image(
         prompt=initial_prompt,

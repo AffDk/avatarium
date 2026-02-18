@@ -32,7 +32,10 @@ async def submit_scenario(
     db: AsyncSession = Depends(get_db),
 ) -> ScenarioDetailResponse:
     """Submit or re-submit a scenario. Triggers moderation + splitting via Gemini."""
-    project = await get_user_project(project_id, current_user.id, db, load_persons=False)
+    project = await get_user_project(project_id, current_user.id, db, load_persons=True)
+
+    # Extract person names for person-aware splitting
+    person_names = [p.name for p in project.persons] if project.persons else []
 
     # Check if scenario already exists — if so, delete old one for re-submission
     result = await db.execute(
@@ -46,7 +49,7 @@ async def submit_scenario(
         await db.flush()
 
     # Call Gemini for moderation + splitting
-    gemini_result = await moderate_and_split(body.text)
+    gemini_result = await moderate_and_split(body.text, person_names=person_names)
 
     # Create scenario record
     moderation_status = (
