@@ -4,6 +4,21 @@
 **Platform**: AI-powered avatar video generation  
 **Stack**: Python 3.12+ · FastAPI · SQLAlchemy (async) · Jinja2 · fal.ai · Google Gemini · JWT/bcrypt · Authlib
 
+### Who Is This For?
+
+This walkthrough is written for anyone who wants to understand how the Avatarium codebase works — even if you're relatively new to web development. Every technical term is explained when it first appears, and each section starts with a plain-language overview before diving into details.
+
+### What Is Avatarium?
+
+Avatarium is a **web application** — a program that runs on a server and is accessed through a web browser (like Chrome, Firefox, or Safari). Users visit Avatarium in their browser to:
+
+1. **Create an account** (sign up with email/password or Google)
+2. **Start a video project** by uploading photos of people
+3. **Write a scenario** (a short story describing the video they want)
+4. **Generate an AI-powered video** where the uploaded people appear in the scenario
+
+The entire process — from uploading photos to watching the final video — happens through the browser. Behind the scenes, the server coordinates with several AI services to moderate content, generate images, and produce video clips.
+
 ---
 
 ## Table of Contents
@@ -27,9 +42,63 @@
 
 ---
 
+## Key Concepts Glossary
+
+Before reading the walkthrough, here are the core technical terms you'll encounter. Each is explained in plain language.
+
+### How a Web App Works (The Big Picture)
+
+When you visit a website, here's what happens behind the scenes:
+
+1. **Your browser** (the "client") sends a **request** to a remote computer (the "server") — for example, "show me the dashboard page."
+2. **The server** receives the request, figures out what to do (look up data, check permissions, etc.), and sends back a **response** — usually an HTML page or JSON data.
+3. **Your browser** displays the response to you.
+
+This back-and-forth is called the **request-response cycle**, and it's the foundation of every web application.
+
+### Terminology
+
+| Term | Plain-Language Explanation |
+|------|---------------------------|
+| **API** (Application Programming Interface) | A set of URLs that a server exposes so programs (including browser JavaScript) can send and receive structured data (usually JSON). Think of it like a menu at a restaurant — it lists what you can order and what you'll get back. |
+| **REST API** | A style of API where each URL represents a "resource" (like a project or a user) and you use HTTP methods (GET, POST, PUT, DELETE) to interact with them. |
+| **Endpoint / Route** | A specific URL path that the server responds to, like `/api/projects` or `/api/auth/login`. Each endpoint does one thing. |
+| **HTTP Methods** | The "verbs" of web requests: **GET** = retrieve data, **POST** = create something new, **PUT** = update/replace, **DELETE** = remove. |
+| **JSON** (JavaScript Object Notation) | A text format for structured data that looks like `{"name": "Alice", "age": 30}`. APIs use it to send and receive data. |
+| **Server** | A computer (or program) that listens for incoming requests and sends back responses. Avatarium's server is written in Python using FastAPI. |
+| **Client** | The program making requests — usually your web browser, but can also be a mobile app or another server. |
+| **Frontend** | Everything the user sees and interacts with in the browser — HTML pages, CSS styling, JavaScript behavior. |
+| **Backend** | Everything running on the server — request handling, business logic, database access, API calls to external services. |
+| **Database** | A structured storage system where the application saves data permanently (users, projects, photos, etc.). Think of it like a collection of spreadsheets where each table is a sheet and each row is a record. |
+| **ORM** (Object-Relational Mapper) | A tool that lets you work with database records as Python objects instead of writing raw SQL queries. Avatarium uses SQLAlchemy. |
+| **Schema** | A definition of what shape data should have — like a form template that says "this field is required, this one is optional, this must be a number." Avatarium uses Pydantic schemas to validate incoming requests and shape outgoing responses. |
+| **Middleware** | Code that runs on *every* request before it reaches your endpoint — like a security guard at the door. Used for rate limiting, session management, etc. |
+| **Authentication** ("Auth") | Proving *who you are* — logging in with a password or Google account. |
+| **Authorization** | Determining *what you're allowed to do* — e.g., you can only see your own projects, not other people's. |
+| **JWT** (JSON Web Token) | A small, signed piece of data the server gives you after login. You send it with every request to prove you're logged in, like a wristband at a concert. |
+| **OAuth** | A protocol that lets you log in with an existing account (like Google) instead of creating a new password. The app redirects you to Google, you approve, and Google tells the app who you are. |
+| **Cookie** | A small piece of data the server tells your browser to store. The browser sends it back automatically with every request — used here to keep you logged in on page navigation. |
+| **Environment Variable** | A configuration value set outside the code (like a password or API key). This keeps secrets out of the source code. |
+| **Async / Asynchronous** | A programming style where the server can handle many requests at once without waiting for slow operations (like database queries or API calls) to finish. |
+| **Migration** | A versioned change to the database structure (adding a table, adding a column, etc.). Migrations let you evolve the database over time without losing data. |
+| **UUID** | A universally unique identifier — a long random string like `550e8400-e29b-41d4-a716-446655440000`. Used as IDs because they're virtually impossible to guess or collide. |
+| **Hash / Hashing** | A one-way mathematical function that turns a password into a scrambled string. You can verify a password against its hash, but you can't reverse the hash back to the password. Avatarium uses bcrypt for this. |
+| **MIME Type** | A label describing a file's format, like `image/jpeg` for JPEG photos or `application/json` for JSON data. |
+| **FK** (Foreign Key) | A column in one database table that points to a row in another table — like a reference link. For example, every project has a `user_id` FK pointing to the user who owns it. |
+| **PK** (Primary Key) | The unique identifier for each row in a table — no two rows can have the same PK. |
+| **CASCADE** | A rule that says "if I delete the parent, automatically delete all children." For example, deleting a project cascades to delete all its photos, scenarios, and videos. |
+
+---
+
 ## 1. Architecture Overview
 
 Avatarium is a server-rendered FastAPI application with API endpoints that power both the Jinja2 template pages and any future client integrations. The architecture is organized into distinct layers, each with a clear responsibility.
+
+> **What does "server-rendered" mean?** When you visit a page like `/dashboard`, the server builds the complete HTML page (filling in your name, your projects, etc.) and sends the finished page to your browser. This is different from "client-rendered" apps (like React SPAs) where the browser downloads a blank page and JavaScript fills in the content afterward. Avatarium uses a middle ground: the server renders the initial pages, but JavaScript on the page makes additional API calls for dynamic features like file uploads and status polling.
+
+> **What is FastAPI?** FastAPI is a Python web framework — a toolkit for building web servers. It handles the boring parts (listening for HTTP requests, routing them to the right function, sending responses) so developers can focus on business logic. It's called "Fast" because it's both high-performance and fast to develop with.
+
+> **What is Jinja2?** Jinja2 is a **template engine**. Think of it like a mail merge: you write an HTML page with placeholders like `{{ user.name }}`, and Jinja2 fills in the actual values before sending the page to the browser.
 
 ### Layers
 
@@ -47,15 +116,21 @@ Avatarium is a server-rendered FastAPI application with API endpoints that power
 
 ### Application Entry Point
 
-`backend/main.py` contains the `create_app()` factory function:
+`backend/main.py` contains the `create_app()` factory function. This is the single place where the entire application is assembled and configured — it's the first thing that runs when the server starts.
+
+> **What is a factory function?** Instead of configuring the app at the top of a file (which makes testing hard), the setup is wrapped in a function called `create_app()`. Every time you call it, you get a fresh app instance. This is especially useful for testing, where you want a clean app for each test.
+
+> **What is a lifespan context manager?** It's a way to run setup code when the server starts (like "connect to the database") and cleanup code when the server stops (like "disconnect from the database"). Think of it like opening and closing a shop — you turn on the lights when you open and turn them off when you close.
+
+Here's what `create_app()` does, step by step:
 
 1. Creates the `FastAPI` instance with a `lifespan` context manager
-2. On startup: calls `setup_logging()`, then `create_all()` in development mode
-3. On shutdown: calls `dispose_engine()` to clean up the connection pool
-4. Attaches the `SlowAPI` rate limiter to `app.state.limiter`
-5. Adds `SessionMiddleware` (required for OAuth state persistence)
-6. Mounts `/static` for CSS/JS assets
-7. Includes all 6 routers: health, auth, projects, scenarios, generation, pages
+2. On startup: calls `setup_logging()` to begin recording activity, then `create_all()` in development mode to ensure database tables exist
+3. On shutdown: calls `dispose_engine()` to cleanly close all database connections
+4. Attaches the `SlowAPI` rate limiter to `app.state.limiter` — this prevents any single user from flooding the server with too many requests
+5. Adds `SessionMiddleware` (required for Google OAuth to work — it needs to remember state between the redirect to Google and the callback)
+6. Mounts `/static` so the browser can load CSS stylesheets and JavaScript files
+7. Includes all 6 **routers** (groups of related endpoints): health, auth, projects, scenarios, generation, pages
 
 ```mermaid
 graph TD
@@ -143,7 +218,11 @@ graph TD
 
 **File**: `backend/config.py`
 
-All configuration is loaded from environment variables (or a `.env` file) using `pydantic-settings`. A single `Settings` class holds every configurable value with sensible defaults.
+> **Why do apps need configuration?** Every application needs certain values to run — database addresses, API keys for external services, secret keys for encryption, etc. These values change depending on where the app runs (your laptop vs. a production server), so they should **never** be hard-coded in the source code. Instead, they're stored in **environment variables** — named values set outside the code, like `DATABASE_URL=postgres://...` or `JWT_SECRET_KEY=my-secret`. This way, the same code works everywhere, and secrets stay out of the Git repository.
+
+> **What is a `.env` file?** Instead of setting 15 environment variables one by one in your terminal, you can write them all in a `.env` file (a simple text file with `KEY=value` lines). The app reads this file on startup. This file should be listed in `.gitignore` so it's never committed.
+
+All configuration is loaded from environment variables (or a `.env` file) using `pydantic-settings`. A single `Settings` class holds every configurable value with sensible defaults — meaning the app can start with minimal setup because most values have reasonable fallbacks.
 
 ### Settings Groups
 
@@ -159,11 +238,12 @@ All configuration is loaded from environment variables (or a `.env` file) using 
 
 ### Key Patterns
 
-- **Singleton**: `settings = Settings()` is instantiated at module level — all modules import the same instance.
-- **Environment detection**: Two computed properties:
-  - `is_development` → `app_env == "development"` (enables SQL echo, auto-create tables)
-  - `is_production` → `app_env == "production"` (secure cookies, no auto-create)
-- **Case-insensitive**: `case_sensitive=False` in the model config means `APP_ENV` and `app_env` both work.
+- **Singleton**: `settings = Settings()` is created once when the module is first imported, and every other file in the project shares that same instance. This means there's only ever one copy of the configuration in memory.
+  > **In plain terms**: Imagine the configuration as a single notice board in the office. Everyone reads from the same board — nobody has their own copy that could get out of sync.
+- **Environment detection**: Two helper properties that answer "what mode are we running in?":
+  - `is_development` → `True` when `app_env == "development"` — enables verbose SQL logging in the console and auto-creates database tables on startup (convenient for local development).
+  - `is_production` → `True` when `app_env == "production"` — enables secure cookie flags and disables auto-table-creation (in production, database changes go through formal migrations).
+- **Case-insensitive**: `case_sensitive=False` means `APP_ENV`, `app_env`, and `App_Env` all work — you don't have to worry about the exact casing of your environment variables.
 
 ---
 
@@ -171,7 +251,13 @@ All configuration is loaded from environment variables (or a `.env` file) using 
 
 **File**: `backend/database.py`
 
+> **What is a database, and why do we need one?** When a user creates an account or uploads a photo, that information needs to be saved somewhere permanent — so it's still there when the user comes back tomorrow. A **database** is that permanent storage. It organizes data into **tables** (like spreadsheets), where each row is one record (e.g., one user) and each column is a property (e.g., email, name, password).
+
+> **What does "async" mean here?** Normally, when your code asks the database a question, it sits and waits for the answer before doing anything else. With **async** (asynchronous) code, the server can handle other users' requests while waiting for the database to respond. This is like a restaurant where the waiter takes multiple tables' orders instead of standing at the kitchen window waiting for one dish at a time.
+
 ### Async Engine & Session
+
+The **engine** is the connection pipeline between the application and the database. The **session** is like a shopping cart for database operations — you add, modify, and remove items, then either "checkout" (commit) to save everything, or "empty the cart" (rollback) if something went wrong.
 
 ```python
 engine = create_async_engine(settings.database_url, echo=settings.is_development, future=True)
@@ -181,10 +267,12 @@ async_session_factory = async_sessionmaker(
 )
 ```
 
-- **`expire_on_commit=False`**: Prevents lazy-load attribute access errors after `commit()` in async context. Objects remain usable without issuing new queries.
-- **`future=True`**: Enables SQLAlchemy 2.0 style.
+- **`expire_on_commit=False`**: Normally, after saving data to the database, SQLAlchemy "forgets" the object's attributes (so it would have to ask the database again if you read them). In async code, that re-fetching doesn't work well, so this setting tells SQLAlchemy to keep the data in memory after saving. Objects remain usable without issuing new queries.
+- **`future=True`**: Enables the modern SQLAlchemy 2.0 style of writing queries.
 
 ### `get_db()` Dependency
+
+> **What is a "dependency" in FastAPI?** A dependency is a function that runs automatically before your endpoint code. FastAPI's **dependency injection** system lets you say "this endpoint needs a database session" and FastAPI will create one, pass it in, and clean it up afterward. This keeps endpoint code clean and prevents resource leaks.
 
 ```python
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
@@ -197,21 +285,29 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
             raise
 ```
 
-This FastAPI dependency:
-1. Opens a session from the factory
-2. Yields it to the route handler
-3. **Auto-commits** on success — route handlers never call `commit()` directly, only `flush()` to get IDs
-4. **Auto-rolls-back** on any exception
-5. Session is closed when the `async with` block exits
+This FastAPI dependency works like a loan system for database connections:
+1. Opens a session (database connection) from the factory
+2. **Yields** it to the route handler — "here, use this session for your work"
+3. **Auto-commits** on success — if the endpoint finishes without errors, all changes are saved to the database. Route handlers never need to manually call `commit()`; they only call `flush()` when they need to get auto-generated IDs mid-operation
+4. **Auto-rolls-back** on any exception — if anything goes wrong, *all* changes are undone, leaving the database in a clean state
+5. Session is automatically closed when done — the connection is returned to the pool for reuse
 
 ### Helper Functions
 
-| Function | Purpose |
-|----------|---------|
-| `create_all()` | Creates all tables from `Base.metadata` — only called in development via the lifespan startup |
-| `dispose_engine()` | Disposes the connection pool — called during lifespan shutdown |
+| Function | What It Does |
+|----------|-------------|
+| `create_all()` | Looks at all the model definitions (User, Project, Photo, etc.) and creates the corresponding database tables if they don't exist. Only runs during development so you don't have to manually create tables while coding. |
+| `dispose_engine()` | Closes all database connections cleanly when the server shuts down. Like checking out of a hotel — you return the room key. |
 
 ### Entity-Relationship Diagram
+
+The diagram below shows all 8 database tables and how they relate to each other. Reading guide:
+
+- **PK** = Primary Key (the unique ID for each row)
+- **FK** = Foreign Key (a reference pointing to a row in another table)
+- **UK** = Unique Key (this value can't be duplicated across rows)
+- Lines between tables show relationships: `||--o{` means "one to many" (one user can have many projects), `||--o|` means "one to zero-or-one" (one project has at most one scenario)
+- Text in quotes after each field describes constraints or defaults
 
 ```mermaid
 erDiagram
@@ -317,9 +413,20 @@ erDiagram
 
 ## 4. Data Model & Enums
 
+This section describes every database table in detail — what each column stores, what rules it follows, and how tables connect to each other.
+
+> **What are "enums"?** Short for "enumerations" — a fixed set of allowed values. For example, a traffic light can only be `red`, `yellow`, or `green`. In Avatarium, `ProjectStatus` is an enum with values like `draft`, `generating`, `completed`. Using enums prevents invalid values (you can't accidentally set a status to `banana`).
+
+> **Reading the tables below**: Each table describes a database table's columns. Key terms:
+> - **Type**: What kind of data the column holds (text, number, date, true/false, etc.)
+> - **Constraints**: Rules the database enforces — like `NOT NULL` (this field is required), `UNIQUE` (no duplicates allowed), or `FK` (this points to another table)
+> - **nullable**: The field is *optional* — it can be left empty
+
 ### Table Descriptions
 
 #### `users` — `backend/models/user.py`
+
+This table stores every registered user. Each user has either a password (for email login) or a Google ID (for Google login) — or both if they've linked their accounts.
 
 | Column | Type | Constraints | Notes |
 |--------|------|-------------|-------|
@@ -335,6 +442,8 @@ erDiagram
 
 #### `projects` — `backend/models/project.py`
 
+A project is the central unit of work: it groups together a user's photos, their scenario, and the generated videos. Every project belongs to exactly one user.
+
 | Column | Type | Constraints | Notes |
 |--------|------|-------------|-------|
 | `id` | UUID | PK | |
@@ -347,9 +456,11 @@ erDiagram
 | `created_at` | DateTime(tz) | NOT NULL | |
 | `updated_at` | DateTime(tz) | NOT NULL, onupdate | |
 
-**Relationships**: `persons` loaded via `selectin` eager loading (always available without extra queries).
+**Relationships**: `persons` loaded via `selectin` eager loading — this means whenever you load a project from the database, SQLAlchemy automatically loads all associated persons in the same query, so you don't get errors when trying to access them later.
 
 #### `persons` — `backend/models/project.py`
+
+A person is a character in the video. Persons are created automatically when photos are uploaded — the person's name is extracted from the filename (e.g., uploading `alice_1.jpg` creates a person named `alice`).
 
 | Column | Type | Constraints | Notes |
 |--------|------|-------------|-------|
@@ -359,9 +470,11 @@ erDiagram
 | `created_at` | DateTime(tz) | NOT NULL | |
 
 **Unique constraint**: `(project_id, name)` — one person per name per project.
-**Relationships**: `photos` loaded via `selectin`.
+**Relationships**: `photos` loaded via `selectin` (same eager loading pattern as projects → persons).
 
 #### `photos` — `backend/models/project.py`
+
+Each photo is a reference image of a person. The actual image file is stored on disk; the database row tracks metadata (filename, size, location).
 
 | Column | Type | Constraints | Notes |
 |--------|------|-------------|-------|
@@ -378,6 +491,8 @@ erDiagram
 
 #### `scenarios` — `backend/models/scenario.py`
 
+A scenario is the user's description of the video they want. It's sent to Google Gemini AI for content moderation (checking for inappropriate content) and splitting into individual scenes.
+
 | Column | Type | Constraints | Notes |
 |--------|------|-------------|-------|
 | `id` | UUID | PK | |
@@ -388,9 +503,11 @@ erDiagram
 | `created_at` | DateTime(tz) | NOT NULL | |
 | `moderated_at` | DateTime(tz) | nullable | Timestamp of moderation response |
 
-**Relationships**: `segments` loaded via `selectin`, ordered by `sequence_number`.
+**Relationships**: `segments` loaded via `selectin`, ordered by `sequence_number` (so scenes always appear in the right order).
 
 #### `segments` — `backend/models/scenario.py`
+
+A segment is one scene within a scenario. When the AI splits a scenario into parts, each part becomes a segment. Segments are processed in order to generate video clips.
 
 | Column | Type | Constraints | Notes |
 |--------|------|-------------|-------|
@@ -404,6 +521,8 @@ erDiagram
 **Unique constraint**: `(scenario_id, sequence_number)`.
 
 #### `video_clips` — `backend/models/video.py`
+
+Each video clip corresponds to one segment. The pipeline generates an image, then converts it to a short video clip. The `last_frame_path` column is key to the "chaining" mechanism — the last frame of each clip becomes the starting image for the next clip, ensuring visual continuity.
 
 | Column | Type | Constraints | Notes |
 |--------|------|-------------|-------|
@@ -423,6 +542,8 @@ erDiagram
 | `updated_at` | DateTime(tz) | NOT NULL, onupdate | |
 
 #### `final_videos` — `backend/models/video.py`
+
+The final video is what the user actually watches — all the individual clips concatenated (joined end-to-end) into one continuous video.
 
 | Column | Type | Constraints | Notes |
 |--------|------|-------------|-------|
@@ -543,29 +664,45 @@ stateDiagram-v2
 
 **Files**: `backend/api/auth.py`, `backend/services/auth_service.py`, `backend/api/pages.py`, `backend/schemas/auth.py`
 
+> **What is authentication?** Authentication is the process of proving who you are. When you log in with your email and password, you're authenticating — telling the server "I am this person." The server then gives you proof of your identity (a token) that you show on subsequent requests so you don't have to log in again for every page.
+
+> **Authentication vs. Authorization**: These are often confused. **Authentication** = "Who are you?" (logging in). **Authorization** = "What are you allowed to do?" (e.g., can you view this project? Only if it's yours).
+
 Avatarium supports two authentication methods that share a unified `User` model:
 
-1. **Email / password** — registration and login with bcrypt hashing
-2. **Google OAuth** — via Authlib's OpenID Connect integration
+1. **Email / password** — The traditional way: you create an account with an email and password. The password is **hashed** (scrambled using bcrypt, a one-way function) before being stored, so even if someone stole the database, they couldn't see your actual password.
+2. **Google OAuth** — The "Sign in with Google" button. Instead of creating a new password, you authorize Avatarium to get your name and email from Google. This uses the Authlib library to implement the OAuth protocol.
 
 ### Authentication Mechanisms
 
 #### JWT Tokens (API Routes)
+
+> **What is a JWT?** A JSON Web Token is like a digitally-signed ID card. After you log in, the server creates a small piece of data containing your user ID and an expiration time, then signs it with a secret key. You send this token with every API request. The server can verify the signature to confirm it issued that token and that it hasn't been tampered with — without needing to look anything up in the database.
+
 - Created by `create_access_token(user_id)` with payload: `{sub: str(user_id), exp, iat}`
-- Signed with `HS256` using `jwt_secret_key`, expires in 60 minutes (configurable)
-- Passed as `Authorization: Bearer <token>` header
-- Validated by `get_current_user` dependency (extracts from `HTTPBearer`)
+  - `sub` = "subject" (who this token is for — the user's ID)
+  - `exp` = when the token expires
+  - `iat` = when the token was issued
+- Signed with `HS256` (a cryptographic algorithm) using `jwt_secret_key`, expires in 60 minutes (configurable)
+- Passed as `Authorization: Bearer <token>` header — this is a standard HTTP convention where the browser/JavaScript includes the token in the request header
+- Validated by `get_current_user` dependency (extracts the token from the `Authorization` header and decodes it)
 
 #### Cookie Auth (Page Routes)
-- Google OAuth callback sets an `access_token` cookie (httponly=False, samesite=lax)
-- `pages.py` reads the cookie via `_get_current_user_or_none(request, db)`
+
+> **What is a cookie?** A cookie is a small piece of data that the server tells the browser to store. The browser then automatically includes that data in every future request to the same server. This is how websites "remember" that you're logged in as you navigate from page to page.
+
+- Google OAuth callback sets an `access_token` cookie (httponly=False, samesite=lax) — this means the cookie is accessible to JavaScript (needed for API calls) and is sent on same-site navigations
+- `pages.py` reads the cookie via `_get_current_user_or_none(request, db)` to check if the user is logged in
 - Pages redirect to `/login` if no valid cookie is found
 
 ### Account Linking
+
+> **Why link accounts?** A user might first register with email/password, then later click "Sign in with Google" using the same email. Without account linking, this would create a duplicate account. The linking logic prevents this by checking for existing accounts before creating a new one.
+
 `get_or_create_google_user(db, google_id, email, display_name)` performs a three-step lookup:
-1. Find by `google_id` → return existing user
-2. Find by `email` → link the Google account (set `google_id`, set `email_verified=True`)
-3. Neither found → create new user with `email_verified=True`
+1. **Find by `google_id`** → return existing user (they've logged in with Google before)
+2. **Find by `email`** → link the Google account to the existing email account (set `google_id`, set `email_verified=True`)
+3. **Neither found** → create a brand new user with `email_verified=True`
 
 ### Scaffolded Features
 - **`email_verified`** column exists but **no email verification flow** (no verification email, no token, no endpoint). Google OAuth users get `True` automatically; email registrations stay `False`. See [Section 15](#15-implementation-status).
@@ -654,21 +791,28 @@ sequenceDiagram
 
 **Files**: `backend/api/projects.py` (upload endpoint), `backend/services/upload_service.py`, `backend/api/dependencies.py`
 
+> **What is a "pipeline"?** In software, a pipeline is a series of steps that data passes through, one after another. Each step either transforms the data or checks it against some rule. If any step fails, the pipeline stops and reports an error. Think of it like an airport security line — your bag goes through an X-ray (step 1), then a weight check (step 2), then tagging (step 3).
+
 Uploading photos establishes the "cast" of person characters for a project. Each photo is assigned to a person derived from the filename convention `<personName>_<sequenceNumber>.<ext>`.
+
+> **Why does the filename matter?** Instead of requiring a separate form to name each person, Avatarium uses a simple naming convention. If you upload `alice_1.jpg`, `alice_2.jpg`, and `bob_1.jpg`, the system automatically creates two persons: `alice` (with 2 photos) and `bob` (with 1 photo). The number after the underscore determines the ordering of photos for each person.
 
 ### Validation Gates
 
-1. **Ownership**: `get_user_project(project_id, user_id, db)` verifies the project belongs to the authenticated user (returns 404 if not)
-2. **MIME type**: Must be one of `image/jpeg`, `image/png`, `image/webp`
-3. **File size**: Maximum 10 MB (10,485,760 bytes)
-4. **Filename format**: Must match regex `^(?P<person>[a-zA-Z0-9]+)_(?P<seq>\d+)\.(?P<ext>[a-zA-Z0-9]+)$`
-5. **Extension**: Derived extension must be in `{jpg, jpeg, png, webp}`
-6. **Photo count**: Maximum 10 photos per person per project
+Before saving any file, it must pass through several safety checks (each numbered step below). If any check fails, the file is rejected with a `400 Bad Request` error and a descriptive message.
+
+1. **Ownership**: `get_user_project(project_id, user_id, db)` verifies the project belongs to the authenticated user (returns 404 if not) — this prevents users from uploading photos to other people's projects
+2. **MIME type**: Must be one of `image/jpeg`, `image/png`, `image/webp` — this prevents non-image files (PDFs, executables, etc.) from being uploaded
+3. **File size**: Maximum 10 MB (10,485,760 bytes) — prevents the server from running out of disk space or memory
+4. **Filename format**: Must match regex `^(?P<person>[a-zA-Z0-9]+)_(?P<seq>\d+)\.(?P<ext>[a-zA-Z0-9]+)$` — ensures the `personName_number.extension` convention is followed
+   > **What is a regex?** A "regular expression" is a pattern-matching language. This regex says: "one or more letters/numbers, then an underscore, then one or more digits, then a dot, then the file extension." Anything that doesn't match this pattern (like `my photo.jpg` or `alice.jpg`) is rejected.
+5. **Extension**: Derived extension must be in `{jpg, jpeg, png, webp}` — double-checks that the file extension matches an allowed image format
+6. **Photo count**: Maximum 10 photos per person per project — prevents excessive resource usage
 
 ### Person Management
-- Person name is extracted from filename and normalized to lowercase (`Alice_1.jpg` → person `alice`)
-- Persons are **get-or-created**: if a person with that name already exists for the project, photos are added to it
-- Unique constraint `(project_id, name)` prevents duplicate person records
+- Person name is extracted from filename and **normalized to lowercase** (`Alice_1.jpg` → person `alice`) — this means `Alice_1.jpg` and `alice_2.jpg` are treated as the same person
+- Persons are **get-or-created**: the system checks if a person with that name already exists for the project. If yes, the new photo is added to that person. If no, a new person record is created first.
+- Unique constraint `(project_id, name)` at the database level guarantees no duplicate person records, even if two requests arrive simultaneously
 
 ### Storage Pattern
 Files are saved to: `uploads/{user_id}/{project_id}/{original_filename}`
@@ -709,9 +853,15 @@ flowchart TD
 
 **Files**: `backend/api/scenarios.py`, `backend/services/moderation_service.py`, `backend/schemas/scenario.py`
 
+> **What is content moderation?** Content moderation is the process of reviewing user-submitted content to ensure it follows the platform's rules. On social media, this might be done by human reviewers. In Avatarium, we use AI (Google Gemini) to automatically check the user's scenario text for policy violations like violence, hate speech, or illegal content — before any video is generated.
+
+> **What is "scene splitting"?** A user writes a single paragraph or page describing their full video scenario. But videos are generated one short clip at a time (about 5 seconds each). So the AI also splits the user's text into individual segments, each describing one "scene" that can be turned into a clip. This moderation + splitting happens in a single AI call.
+
 When a user submits a scenario, it is sent to Google Gemini in a single API call that performs **both** content moderation and scene splitting simultaneously.
 
 ### Prompt Architecture
+
+> **What is a "prompt" in AI?** When you interact with an AI model like ChatGPT or Google Gemini, the text you send is called a "prompt". It's the instruction that tells the AI what to do. In Avatarium, the prompt isn't typed by the user directly — instead, the backend constructs it programmatically by combining rules, the user's scenario text, and character information.
 
 The prompt has two parts assembled dynamically:
 
@@ -726,6 +876,8 @@ The prompt has two parts assembled dynamically:
 
 ### Response Parsing (`parse_gemini_response`)
 
+> **Why do we need to parse the response?** The AI returns its answer as text. Even though we ask it to respond in JSON format, AI models can sometimes add extra characters (like markdown code fences `` ``` ``), return malformed JSON, or include unexpected data. The parsing step carefully extracts the data, validates it has the right structure, and cleans up inconsistencies — because we can never fully trust AI output to be perfectly formatted.
+
 1. Strip markdown code fences (`` ```json ... ``` ``) if present
 2. Parse JSON
 3. Validate required keys: `approved`, `segments`
@@ -734,7 +886,7 @@ The prompt has two parts assembled dynamically:
 6. Per-segment validation:
    - `persons` must be `list[str]`
    - Normalize all names to lowercase
-   - Filter out names not in the project's person list
+   - Filter out names not in the project's person list (the AI sometimes invents characters that don't exist)
 
 ### Re-submission
 If a scenario already exists for the project, it is **deleted** (cascading to segments) before creating the new one. This allows users to iterate on their scenario.
@@ -790,15 +942,21 @@ sequenceDiagram
 
 **Files**: `backend/services/pipeline_service.py`, `backend/services/image_gen_service.py`, `backend/services/video_gen_service.py`, `backend/api/generation.py`
 
+> **What is a "generation pipeline"?** This is the core of Avatarium — the multi-step process that turns a text description into an actual video. It works like a factory assembly line: each station does one job, and the output of one station feeds into the next.
+
 The video generation pipeline iteratively creates a video clip for each segment, chaining clips together by extracting the last frame of each clip to use as the input image for the next.
+
+> **Why chain clips together?** Each segment is only about 5 seconds long. To make the video visually continuous (so there isn't a jarring jump between scenes), the system extracts the very last frame of one clip and uses it as the starting image for the next clip. This creates a smooth visual flow even though each clip is generated independently by the AI.
 
 ### Pipeline Steps
 
+> **What is fal.ai?** Fal.ai is a cloud service that hosts AI models. Instead of running expensive AI image/video generation on our own server, we send requests to fal.ai's servers and they return the results. This is common in modern apps — you pay per use instead of buying your own GPU hardware.
+
 1. **Initial Image Generation** (`image_gen_service.generate_initial_image`):
    - Takes the first segment's description + style directive
-   - Calls fal.ai Qwen Image model via `fal_client.subscribe()`
+   - Calls fal.ai Qwen Image model via `fal_client.subscribe()` — this means "send the request and wait for the result"
    - Style prefix: `"cartoon, stylized animation style"` (animation) or `"realistic, cinematic movie style"` (movie_like)
-   - Downloads the result via `httpx` and saves locally
+   - Downloads the result via `httpx` (an HTTP client library, like a browser for code) and saves locally
 
 2. **Iterative Video Clip Generation** (for each segment):
    - `video_gen_service.generate_video_clip()` calls fal.ai LTX Video 13B
@@ -808,9 +966,10 @@ The video generation pipeline iteratively creates a video clip for each segment,
 
 3. **Last Frame Extraction** (`video_gen_service.extract_last_frame`):
    - Runs FFmpeg subprocess: `ffmpeg -sseof -0.1 -i clip.mp4 -vframes 1 -y last_frame.jpg`
+   > **What is FFmpeg?** FFmpeg is a free, widely-used command-line tool for processing video and audio files. Here it is used as a "subprocess" — meaning the Python code launches FFmpeg as a separate program, waits for it to finish, and then uses the resulting file. The command above says: "Go to 0.1 seconds before the end of the video, grab one frame, and save it as a JPEG image."
    - Extracts the final frame to use as input for the next segment's video
 
-4. **Chaining**: The extracted last frame becomes `current_image` for the next iteration
+4. **Chaining**: The extracted last frame becomes `current_image` for the next iteration — creating visual continuity between scenes
 
 ### Retry Logic
 - `MAX_RETRIES = 1` — each failed clip is retried once
@@ -831,6 +990,8 @@ The video generation pipeline iteratively creates a video clip for each segment,
 ```
 
 ### ⚠️ Critical Gap: `launch_pipeline()` Is a Placeholder
+
+> **What is a placeholder function?** Sometimes during development, programmers write a function with only the name and no actual code inside (just `pass` in Python, which means "do nothing"). This is to mark that the function *should* exist and *will* be implemented later. It lets other parts of the code reference the function without breaking, even before it's ready.
 
 The `launch_pipeline()` function in `generation.py` has a body of `pass`. It is called after setting the project status to `GENERATING`, but it **never actually invokes `pipeline_service.run_pipeline()`**. The pipeline logic is complete as a synchronous-style async function, but the background task wiring is missing. See [Section 15](#15-implementation-status).
 
@@ -863,6 +1024,10 @@ flowchart TD
 ---
 
 ## 9. API Reference
+
+> **What is an API reference?** This section is like a phone book for the app's endpoints. Each row describes one URL the server responds to, what HTTP method to use, whether you need to be logged in, and what data format to send or expect back. Developers use this as a quick-lookup table when building the frontend or integrating with external tools.
+
+> **Reading the tables below**: The "Method" column shows the HTTP verb (`GET` = read data, `POST` = create data, `PUT` = replace/update data, `DELETE` = remove data). "Auth" tells you whether the request requires a login token. "Request Schema" is the shape of data you send; "Response Schema" is the shape of data you get back. A status code like `201` means "created successfully", `204` means "done, no data to return", `302` means "redirecting you to another page".
 
 ### Health
 
@@ -924,6 +1089,8 @@ flowchart TD
 
 ### Shared Dependency: `get_user_project`
 
+> **Why is this shared?** Multiple parts of the app need to verify "does this project exist AND does it belong to the logged-in user?" Instead of repeating this check in every endpoint, it's defined once in `dependencies.py` and reused. This is the DRY principle (Don't Repeat Yourself).
+
 **File**: `backend/api/dependencies.py`
 
 Used by `projects.py`, `scenarios.py`, and `generation.py`. Accepts optional `load_persons` parameter (default `True`) to control eager loading. Returns 404 if the project doesn't exist or doesn't belong to the user.
@@ -978,9 +1145,11 @@ graph TD
 
 **Files**: `backend/templates/` (5 templates), `static/js/app.js`, `static/css/style.css`
 
+> **What are templates?** In a server-rendered web app, templates are HTML files with special placeholders (like `{{ user.name }}`) that the server fills in with real data before sending the page to the browser. Avatarium uses Jinja2 templates, which support "inheritance" — a base template defines the common layout (navbar, footer), and child templates fill in only the unique content for each page.
+
 ### Template Inheritance Hierarchy
 
-All pages extend `base.html`:
+All pages extend `base.html` — this means they start with the layout defined in `base.html` and then add their own content into designated "blocks":
 
 ```
 base.html
@@ -1010,6 +1179,8 @@ base.html
 
 ### Client-Side JavaScript — `static/js/app.js`
 
+> **What is client-side JavaScript?** While the server (Python/FastAPI) handles data storage and business logic, the browser runs JavaScript to make the page interactive without requiring a full page reload. For example, when you drop photos onto the upload zone, JavaScript handles the drag-and-drop interaction, validates filenames, and sends the files to the server — all without navigating away from the page.
+
 Key behaviors:
 
 - **Filename validation**: Regex `<person>_<number>.<ext>` validated client-side before upload
@@ -1033,7 +1204,11 @@ Key behaviors:
 
 **Files**: `backend/middleware/rate_limit.py`, `backend/main.py`
 
+> **What is middleware?** Middleware is code that runs **between** the server receiving a request and your route handler processing it. Think of it like airport security before you reach the gate — every request passes through middleware first. Middleware can reject requests (e.g., too many from one IP), add data to the request (e.g., session info), or modify the response (e.g., add security headers).
+
 ### Rate Limiting (SlowAPI)
+
+> **What is rate limiting?** Rate limiting prevents any single user (identified by their IP address) from sending too many requests in a short time. This protects the server from abuse, denial-of-service attacks, and accidental infinite loops in client code. If you exceed the limit, you get a `429 Too Many Requests` error and have to wait.
 
 ```python
 limiter = Limiter(key_func=get_remote_address, default_limits=[settings.rate_limit_default])
@@ -1045,6 +1220,8 @@ limiter = Limiter(key_func=get_remote_address, default_limits=[settings.rate_lim
 - **Error handler**: `_rate_limit_exceeded_handler` returns 429 Too Many Requests
 
 ### Session Middleware (Starlette)
+
+> **What is session middleware?** HTTP is "stateless" — the server doesn't remember anything between requests. Session middleware gives each user a small, signed cookie that acts as a "memory" across requests. This is essential for the Google OAuth flow, which requires the server to remember a security token between the initial redirect to Google and the callback.
 
 ```python
 app.add_middleware(SessionMiddleware, secret_key=settings.app_secret_key)
@@ -1061,6 +1238,8 @@ app.add_middleware(SessionMiddleware, secret_key=settings.app_secret_key)
 
 **File**: `backend/logging_config.py`
 
+> **What is logging?** Logging is like a flight recorder ("black box") for your application. Instead of just printing to the screen, the app writes structured messages to a file with timestamps, severity levels, and source information. When something goes wrong in production, developers read the log files to understand what happened. Without logging, debugging a server issue would be like solving a mystery with no clues.
+
 ### `setup_logging()`
 
 Called once at application startup via the lifespan context manager.
@@ -1070,6 +1249,8 @@ Called once at application startup via the lifespan context manager.
 - **Idempotent**: Clears all existing handlers before adding new ones (safe for restarts)
 
 ### Log Handlers
+
+> **What is a handler?** A log handler is the destination where log messages are sent. Avatarium uses two handlers simultaneously: one writes everything (`DEBUG` and above) to a file for detailed post-mortems, and another prints only important messages (`INFO` and above) to the console for developers watching in real-time.
 
 | Handler | Level | Destination |
 |---------|-------|-------------|
@@ -1090,22 +1271,26 @@ Format string: `%(asctime)s | %(levelname)-8s | %(name)s | %(message)s`
 
 **File**: `tests/conftest.py`
 
+> **What is test infrastructure?** Automated tests are programs that verify your application works correctly. Instead of manually clicking through every feature after each code change, tests do it automatically in seconds. The "infrastructure" is the setup code that creates a fake database, fake users, and a fake HTTP client so tests can run without affecting real data.
+
 ### Test Database
 
-- **In-memory SQLite** with `aiosqlite` driver: `sqlite+aiosqlite://`
+- **In-memory SQLite** with `aiosqlite` driver: `sqlite+aiosqlite://` — this creates a temporary database that lives only in memory (RAM) and disappears when the test finishes. It's fast and completely isolated from your real data.
 - **`StaticPool`**: Shares a single connection across all test operations — required for in-memory SQLite where each connection gets a separate database
 - **`expire_on_commit=False`**: Same as production, prevents lazy-load issues
 
 ### Fixtures
 
+> **What is a test fixture?** A fixture is a reusable piece of setup code. Instead of every test creating its own user, database, and HTTP client from scratch, fixtures do this once and share the result. Think of fixtures as "pre-built ingredients" that tests can request by name. For example, a test that needs to make authenticated API calls simply requests the `auth_headers` fixture.
+
 | Fixture | Scope | Auto | Purpose |
 |---------|-------|------|---------|
 | `setup_database` | function | ✅ autouse | Create all tables before each test, drop after — full isolation |
 | `override_get_db` | — | — | Generator that yields a test session (mirrors production `get_db`) |
-| `client` | function | — | `AsyncClient` with ASGI transport — makes real HTTP requests to the app without a server |
+| `client` | function | — | `AsyncClient` with ASGI transport — makes real HTTP requests to the app without a running server |
 | `test_user` | function | — | Creates a user with known credentials in the test DB |
 | `auth_token` | function | — | JWT token for `test_user` |
-| `auth_headers` | function | — | `{"Authorization": "Bearer <token>"}` dict |
+| `auth_headers` | function | — | `{"Authorization": "Bearer <token>"}` dict — ready to pass to any authenticated request |
 | `db_session` | function | — | Direct async session for test setup/assertions |
 
 ### Test App Override
@@ -1138,6 +1323,8 @@ tests/
 
 **Files**: `alembic.ini`, `migrations/env.py`, `migrations/versions/`
 
+> **What are database migrations?** When your app evolves, the database structure changes too (new tables, new columns, renamed fields). Migrations are version-controlled scripts that apply these changes step by step. Think of them like Git commits, but for your database structure. They let you upgrade a database from any version to the latest, and roll back if something goes wrong. Avatarium uses **Alembic**, the most popular migration tool for SQLAlchemy.
+
 ### Alembic Configuration
 
 - **`script_location`**: `migrations`
@@ -1166,6 +1353,8 @@ tests/
 
 ## 15. Implementation Status
 
+> **What does "scaffolded" mean?** In construction, scaffolding is the temporary framework that outlines a building's shape before the real walls go up. In software, "scaffolded" code is similar — the structure exists (database tables, class definitions, enum values) but the actual functional code hasn't been written yet. The entries below track features where the *shape* is in place but the *behavior* is missing or incomplete.
+
 The following features are **scaffolded** (models, schemas, or enum values exist) but lack functional implementation:
 
 | Feature | Status | Severity | Detail | Relevant Section |
@@ -1184,6 +1373,8 @@ The following features are **scaffolded** (models, schemas, or enum values exist
 ---
 
 ## 16. File Reference Index
+
+> **How to use this table**: If you're looking at a specific file and want to understand it, find it in the table below and jump to the referenced section(s). If you're reading a section and want to see which files it covers, scan the "Section(s)" column. This table confirms that every backend Python file is documented somewhere in this walkthrough.
 
 Every backend Python file and where it is documented in this walkthrough:
 
