@@ -355,7 +355,7 @@ erDiagram
 
     scenarios {
         UUID id PK
-        UUID project_id FK UK "→ projects.id CASCADE"
+        UUID project_id FK "UK → projects.id CASCADE"
         Text text
         Enum moderation_status "pending | approved | rejected"
         Text rejection_reason "nullable"
@@ -391,7 +391,7 @@ erDiagram
 
     final_videos {
         UUID id PK
-        UUID project_id FK UK "→ projects.id CASCADE"
+        UUID project_id FK "UK → projects.id CASCADE"
         String file_path "max 500"
         Float total_duration
         Numeric total_cost
