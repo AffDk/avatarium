@@ -38,6 +38,31 @@
         return;
     }
 
+    // ── Delete project ───────────────────────────
+    async function deleteProject(projectId, cardEl) {
+        if (!confirm('Delete this project? This cannot be undone.')) return;
+        try {
+            const resp = await fetch(`/api/projects/${projectId}`, {
+                method: 'DELETE',
+                headers: { 'Authorization': 'Bearer ' + token }
+            });
+            if (resp.ok) {
+                cardEl.remove();
+                // Check if grid is now empty
+                const list = document.getElementById('project-list');
+                if (!list.querySelector('.project-card')) {
+                    list.style.display = 'none';
+                    document.getElementById('empty-state').style.display = 'block';
+                }
+            } else {
+                alert('Failed to delete project.');
+            }
+        } catch {
+            alert('Network error — could not delete project.');
+        }
+    }
+    window._deleteProject = deleteProject;
+
     fetch('/api/projects', {
         headers: { 'Authorization': 'Bearer ' + token }
     })
@@ -62,7 +87,10 @@
                     <span class="style-tag">${project.video_style === 'animation' ? '🎨 Animation' : '🎬 Movie-like'}</span>
                 </div>
                 <p class="project-date">Created: ${new Date(project.created_at).toLocaleDateString()}</p>
-                <a href="/projects/${project.id}" class="btn btn-secondary">Open</a>
+                <div class="project-card-actions">
+                    <a href="/projects/${project.id}" class="btn btn-secondary">Open</a>
+                    <button type="button" class="btn btn--danger btn--sm" onclick="window._deleteProject('${project.id}', this.closest('.project-card'))">🗑️ Delete</button>
+                </div>
             `;
             list.appendChild(card);
         });

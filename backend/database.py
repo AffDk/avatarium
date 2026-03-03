@@ -1,16 +1,30 @@
 """Async SQLAlchemy engine, session factory, and DB dependency."""
 
+import logging
 from collections.abc import AsyncGenerator
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from backend.config import settings
 
-engine = create_async_engine(
-    settings.database_url,
-    echo=settings.is_development,
-    future=True,
-)
+logger = logging.getLogger(__name__)
+
+_is_sqlite = settings.database_url.startswith("sqlite")
+
+# Engine kwargs
+_engine_kwargs: dict = {
+    "echo": settings.is_development,
+    "future": True,
+}
+if _is_sqlite:
+    _engine_kwargs["connect_args"] = {
+        "check_same_thread": False,
+        "timeout": 30,  # SQLite busy-wait timeout in seconds
+    }
+
+engine = create_async_engine(settings.database_url, **_engine_kwargs)
+
 
 async_session_factory = async_sessionmaker(
     engine,
@@ -28,6 +42,16 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
         except Exception:
             await session.rollback()
             raise
+
+
+async def init_db() -> None:
+    """Set SQLite PRAGMAs for performance and concurrency (WAL mode)."""
+    if _is_sqlite:
+        async with engine.begin() as conn:
+            await conn.execute(text("PRAGMA journal_mode=WAL"))
+            await conn.execute(text("PRAGMA busy_timeout=30000"))
+            await conn.execute(text("PRAGMA synchronous=NORMAL"))
+        logger.info("SQLite PRAGMAs applied (WAL, busy_timeout=30s)")
 
 
 async def create_all() -> None:

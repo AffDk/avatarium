@@ -24,26 +24,37 @@
         <div id="dropzone" class="dropzone">
             <div class="dropzone-content">
                 <span class="dropzone-icon">📸</span>
-                <p>Drag & drop photos here or
-                    <button type="button" id="browse-btn" class="link"
-                        style="background:none;border:none;cursor:pointer;color:inherit;text-decoration:underline;font:inherit;padding:0;">
-                        browse
-                    </button>
-                </p>
+                <p>Drag &amp; drop photos here or <span id="browse-btn" class="dropzone-browse">browse files</span></p>
+                <p class="dropzone-hint">Supports JPG, PNG, WEBP — max 10 MB each</p>
                 <input type="file" id="file-input" multiple accept="image/jpeg,image/png,image/webp" style="display:none;">
             </div>
         </div>
 
-        <div id="file-preview" class="file-preview"></div>
+        <!-- Selected files toolbar -->
+        <div id="selection-toolbar" class="selection-toolbar" style="display:none;">
+            <span id="selection-count" class="selection-count"></span>
+            <button type="button" id="clear-all-btn" class="btn-clear">Clear All</button>
+        </div>
+
+        <!-- Per-person grouping summary -->
         <div id="person-groups" class="person-groups"></div>
 
+        <!-- File preview grid with thumbnails -->
+        <div id="file-preview" class="file-preview-grid"></div>
+
+        <!-- Upload errors -->
+        <div id="upload-errors" class="upload-errors" style="display:none;"></div>
+
         <!-- Existing photos -->
-        <div id="existing-photos" style="display: none;">
-            <h3>Uploaded Photos</h3>
+        <div id="existing-photos" class="existing-photos-section" style="display: none;">
+            <h3>Already Uploaded</h3>
             <div id="photo-list" class="person-groups"></div>
         </div>
 
-        <button id="upload-btn" class="btn btn-primary" disabled>Upload Photos</button>
+        <button id="upload-btn" class="btn btn-primary btn-upload" disabled>
+            <span id="upload-btn-text">Upload Photos</span>
+            <span id="upload-spinner" class="spinner" style="display:none;"></span>
+        </button>
     </section>
 
     <!-- Scenario Section -->
@@ -63,20 +74,36 @@
                           maxlength="10000" rows="6"
                           placeholder="Describe the scene you want to generate..."></textarea>
             </div>
-            <button id="submit-scenario" class="btn btn-primary">Submit Scenario</button>
+            <button id="submit-scenario" class="btn btn-primary">
+                <span id="scenario-btn-text">Submit Scenario</span>
+                <span id="scenario-spinner" class="spinner" style="display:none;"></span>
+            </button>
         </div>
+
+        <!-- Edit scenario button (shown when scenario exists and is approved) -->
+        <button id="edit-scenario-btn" class="btn btn--outline btn--sm" style="display: none; margin-top: 0.75rem;">
+            ✏️ Edit Scenario & Regenerate Segments
+        </button>
     </section>
 
     <!-- Segments Section -->
     <section id="segments-section" class="segments-section" style="display: none;">
-        <h2>Segments</h2>
+        <h2>Segments
+            <button id="regenerate-segments-btn" class="btn btn--outline btn--sm" style="display: none; margin-left: 0.75rem;">
+                🔄 Regenerate Segments
+            </button>
+        </h2>
         <ol id="segment-list" class="segment-list"></ol>
     </section>
 
     <!-- Generation Controls -->
     <section id="generation-controls" class="generation-controls" style="display: none;">
         <button id="start-generation" class="btn btn-primary" disabled>
-            🎬 Start Generation
+            <span id="gen-btn-text">🎬 Start Generation</span>
+            <span id="gen-spinner" class="spinner" style="display:none;"></span>
+        </button>
+        <button id="abort-generation" class="btn btn--outline btn--sm" style="display: none; margin-left: 0.75rem;">
+            ⏹️ Abort Generation
         </button>
         <div id="cost-estimate" class="cost-estimate"></div>
     </section>
@@ -84,8 +111,14 @@
     <!-- Progress Section -->
     <section id="progress-section" class="progress-section" style="display: none;">
         <h2>Generation Progress</h2>
-        <div id="progress-status" class="progress-status"></div>
-        <div id="clip-progress" class="clip-progress"></div>
+        <div id="progress-message" class="status-indicator status-indicator--loading"></div>
+        <div id="progress-bar-container" class="progress-bar-wrapper" style="display: none;">
+            <div class="progress-bar">
+                <div id="progress-bar-fill" class="progress-bar__fill" style="width: 0%"></div>
+            </div>
+            <span id="progress-percent" class="progress-percent">0%</span>
+        </div>
+        <div id="clip-progress" class="clip-progress-grid"></div>
     </section>
 
     <!-- Video Player Section -->
@@ -122,7 +155,7 @@
     // ── Filename validation helpers ──────────────
     const FILENAME_REGEX = /^[a-zA-Z0-9]+_\d+\.\w+$/;
     const ALLOWED_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'webp']);
-    const MAX_FILE_SIZE = 10 * 1024 * 1024;
+    const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
     let selectedFiles = [];
 
     function parseFilename(name) {
@@ -131,10 +164,25 @@
         return { person: match[1].toLowerCase(), seq: parseInt(match[2], 10), ext: match[3].toLowerCase() };
     }
 
+    function formatSize(bytes) {
+        if (bytes < 1024) return bytes + ' B';
+        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+        return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    }
+
     // ── Load project details ─────────────────────
-    fetch(`/api/projects/${projectId}`, { headers })
-        .then(r => { if (!r.ok) throw new Error('Not found'); return r.json(); })
-        .then(data => {
+    // Chain API calls sequentially to avoid SQLite concurrency issues
+    async function loadPage() {
+        try {
+            // 1. Load project details first
+            const projResp = await fetch(`/api/projects/${projectId}`, { headers });
+            if (!projResp.ok) {
+                console.error('Failed to load project:', projResp.status);
+                window.location.href = '/dashboard';
+                return;
+            }
+            const data = await projResp.json();
+
             document.getElementById('project-title').textContent = data.title;
             document.getElementById('project-status').textContent = data.status;
             document.getElementById('project-status').className = `badge badge-${data.status}`;
@@ -145,159 +193,402 @@
             if (data.status === 'draft' || data.status === 'created' || data.status === 'photos_uploaded') {
                 document.getElementById('upload-section').style.display = 'block';
             }
-        })
-        .catch(() => { window.location.href = '/dashboard'; });
 
-    // ── Load existing photos ─────────────────────
-    fetch(`/api/projects/${projectId}/photos`, { headers })
-        .then(r => { if (!r.ok) return null; return r.json(); })
-        .then(data => {
-            if (!data || !data.persons || data.persons.length === 0) return;
-            const container = document.getElementById('existing-photos');
-            const list = document.getElementById('photo-list');
-            container.style.display = 'block';
-            list.innerHTML = data.persons.map(p =>
-                `<div class="person-group"><strong>${p.name}</strong>: ${p.photo_count} photo(s)</div>`
-            ).join('');
-        });
+            // Auto-start polling if project is already generating
+            if (data.status === 'generating' || data.status === 'concatenating') {
+                const genBtn = document.getElementById('start-generation');
+                const genBtnText = document.getElementById('gen-btn-text');
+                const genSpinner = document.getElementById('gen-spinner');
+                const abortBtn = document.getElementById('abort-generation');
+                if (genBtn) genBtn.disabled = true;
+                if (genBtnText) genBtnText.textContent = 'Generating...';
+                if (genSpinner) genSpinner.style.display = 'inline-block';
+                if (abortBtn) abortBtn.style.display = 'inline-flex';
+                document.getElementById('generation-controls').style.display = 'block';
+                pollInterval = setInterval(pollProgress, 3000);
+                pollProgress();
+            }
 
-    // ── Drag & drop + file input ─────────────────
+            // Show failed state on page load — enable retry + show last error
+            if (data.status === 'failed') {
+                document.getElementById('generation-controls').style.display = 'block';
+                const genBtn = document.getElementById('start-generation');
+                const genBtnText = document.getElementById('gen-btn-text');
+                const abortBtn = document.getElementById('abort-generation');
+                if (genBtn) genBtn.disabled = false;
+                if (genBtnText) genBtnText.textContent = '🎬 Retry Generation';
+                if (abortBtn) abortBtn.style.display = 'inline-flex';
+                // Do one poll to show the error details
+                pollProgress();
+            }
+
+            // 2. Load existing photos
+            try {
+                const photosResp = await fetch(`/api/projects/${projectId}/photos`, { headers });
+                if (photosResp.ok) {
+                    const photosData = await photosResp.json();
+                    if (photosData && photosData.persons && photosData.persons.length > 0) {
+                        const container = document.getElementById('existing-photos');
+                        const list = document.getElementById('photo-list');
+                        container.style.display = 'block';
+                        list.innerHTML = photosData.persons.map(group =>
+                            `<div class="person-group-card">
+                                <span class="person-group-name">${group.person.name}</span>
+                                <span class="person-group-count">${group.person.photo_count} photo(s)</span>
+                            </div>`
+                        ).join('');
+                    }
+                }
+            } catch (e) {
+                console.warn('Failed to load photos:', e);
+            }
+
+            // 3. Load scenario
+            try {
+                const scenarioResp = await fetch(`/api/projects/${projectId}/scenario`, { headers });
+                if (scenarioResp.ok) {
+                    const sData = await scenarioResp.json();
+                    document.getElementById('scenario-display').innerHTML =
+                        `<p class="scenario-text">${sData.text}</p>`;
+
+                    const badge = document.getElementById('moderation-badge');
+                    badge.style.display = 'inline-block';
+                    badge.textContent = sData.moderation_status;
+                    badge.className = `moderation-badge badge badge-${sData.moderation_status}`;
+
+                    if (sData.rejection_reason) {
+                        const reason = document.getElementById('rejection-reason');
+                        reason.style.display = 'block';
+                        reason.textContent = '⚠️ ' + sData.rejection_reason;
+                        document.getElementById('scenario-form').style.display = 'block';
+                    }
+
+                    if (sData.segments && sData.segments.length > 0) {
+                        const section = document.getElementById('segments-section');
+                        section.style.display = 'block';
+                        const list = document.getElementById('segment-list');
+                        sData.segments.forEach(seg => {
+                            const li = document.createElement('li');
+                            li.className = `segment-item segment-${seg.generation_status}`;
+                            li.innerHTML = `<span class="seg-num">#${seg.sequence_number}</span> ${seg.description}
+                                <span class="seg-status badge badge-${seg.generation_status}">${seg.generation_status}</span>`;
+                            list.appendChild(li);
+                        });
+
+                        if (sData.moderation_status === 'approved') {
+                            document.getElementById('generation-controls').style.display = 'block';
+                            document.getElementById('start-generation').disabled = false;
+                            // Show regenerate segments button (only if not already generating/completed)
+                            const projStatus = document.getElementById('project-status').textContent;
+                            if (projStatus !== 'generating' && projStatus !== 'completed') {
+                                document.getElementById('regenerate-segments-btn').style.display = 'inline-flex';
+                            }
+                        }
+                    }
+
+                    // Show edit scenario button when scenario exists and project is not generating/completed
+                    if (sData.moderation_status === 'approved' || sData.moderation_status === 'rejected') {
+                        const projStatus = document.getElementById('project-status').textContent;
+                        if (projStatus !== 'generating' && projStatus !== 'completed') {
+                            document.getElementById('edit-scenario-btn').style.display = 'inline-flex';
+                        }
+                    }
+                } else {
+                    // 404 = no scenario yet — show the form
+                    document.getElementById('scenario-form').style.display = 'block';
+                }
+            } catch (e) {
+                console.warn('Failed to load scenario:', e);
+                document.getElementById('scenario-form').style.display = 'block';
+            }
+
+        } catch (e) {
+            console.error('Page load error:', e);
+            window.location.href = '/dashboard';
+        }
+    }
+
+    // Start loading
+    loadPage();
+
+    // ── DOM references ───────────────────────────
     const dropzone = document.getElementById('dropzone');
     const fileInput = document.getElementById('file-input');
     const filePreview = document.getElementById('file-preview');
     const personGroups = document.getElementById('person-groups');
     const uploadBtn = document.getElementById('upload-btn');
+    const uploadBtnText = document.getElementById('upload-btn-text');
+    const uploadSpinner = document.getElementById('upload-spinner');
+    const selectionToolbar = document.getElementById('selection-toolbar');
+    const selectionCount = document.getElementById('selection-count');
+    const clearAllBtn = document.getElementById('clear-all-btn');
+    const uploadErrors = document.getElementById('upload-errors');
 
+    // ── Drag & drop ──────────────────────────────
     if (dropzone) {
-        dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('dragover'); });
-        dropzone.addEventListener('dragleave', () => { dropzone.classList.remove('dragover'); });
-        dropzone.addEventListener('drop', (e) => { e.preventDefault(); dropzone.classList.remove('dragover'); handleFiles(Array.from(e.dataTransfer.files)); });
-        dropzone.addEventListener('click', () => { if (fileInput) fileInput.click(); });
-        dropzone.style.cursor = 'pointer';
+        dropzone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropzone.classList.add('dragover');
+        });
+        dropzone.addEventListener('dragleave', () => {
+            dropzone.classList.remove('dragover');
+        });
+        dropzone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropzone.classList.remove('dragover');
+            handleFiles(Array.from(e.dataTransfer.files));
+        });
+        // Click anywhere on dropzone opens file picker
+        dropzone.addEventListener('click', (e) => {
+            // Prevent double-trigger when clicking the browse span
+            if (e.target.id === 'browse-btn') return;
+            if (fileInput) fileInput.click();
+        });
     }
-    if (fileInput) {
-        fileInput.addEventListener('change', () => { handleFiles(Array.from(fileInput.files)); });
-    }
+
+    // Browse button (inside dropzone — stop propagation)
     const browseBtn = document.getElementById('browse-btn');
     if (browseBtn && fileInput) {
-        browseBtn.addEventListener('click', () => { fileInput.click(); });
+        browseBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            fileInput.click();
+        });
     }
 
-    function handleFiles(files) {
-        selectedFiles = [];
-        const previewHtml = [];
-        const groups = {};
-        for (const file of files) {
+    // File input change
+    if (fileInput) {
+        fileInput.addEventListener('change', () => {
+            handleFiles(Array.from(fileInput.files));
+            // Reset so the same files can be selected again if removed
+            fileInput.value = '';
+        });
+    }
+
+    // Clear all button
+    if (clearAllBtn) {
+        clearAllBtn.addEventListener('click', clearAllFiles);
+    }
+
+    // ── Handle new file selections ───────────────
+    function handleFiles(newFiles) {
+        const errors = [];
+
+        for (const file of newFiles) {
+            // Validate filename format
             if (!FILENAME_REGEX.test(file.name)) {
-                previewHtml.push(`<div class="file-item file-invalid">❌ ${file.name} — Must match &lt;person&gt;_&lt;number&gt;.&lt;ext&gt;</div>`);
+                errors.push(`<strong>${file.name}</strong> — Must match &lt;person&gt;_&lt;number&gt;.&lt;ext&gt; format`);
                 continue;
             }
+
             const ext = file.name.split('.').pop().toLowerCase();
             if (!ALLOWED_EXTENSIONS.has(ext)) {
-                previewHtml.push(`<div class="file-item file-invalid">❌ ${file.name} — Unsupported extension</div>`);
+                errors.push(`<strong>${file.name}</strong> — Unsupported extension (.${ext})`);
                 continue;
             }
+
             if (file.size > MAX_FILE_SIZE) {
-                previewHtml.push(`<div class="file-item file-invalid">❌ ${file.name} — Exceeds 10 MB</div>`);
+                errors.push(`<strong>${file.name}</strong> — Exceeds 10 MB (${formatSize(file.size)})`);
                 continue;
             }
+
             const parsed = parseFilename(file.name);
             if (!parsed) continue;
-            previewHtml.push(`<div class="file-item file-valid">✅ ${file.name} → ${parsed.person} #${parsed.seq}</div>`);
-            if (!groups[parsed.person]) groups[parsed.person] = [];
-            groups[parsed.person].push(file);
+
+            // Skip duplicates (same filename + size already selected)
+            if (selectedFiles.some(f => f.name === file.name && f.size === file.size)) {
+                continue;
+            }
+
             selectedFiles.push(file);
         }
-        if (filePreview) filePreview.innerHTML = previewHtml.join('');
-        if (personGroups) {
-            personGroups.innerHTML = Object.entries(groups).map(([person, files]) =>
-                `<div class="person-group"><strong>${person}</strong>: ${files.length} photo(s)</div>`
-            ).join('');
+
+        // Show validation errors
+        if (uploadErrors) {
+            if (errors.length > 0) {
+                uploadErrors.style.display = 'block';
+                uploadErrors.innerHTML = errors.map(e => `<div class="upload-error-item">❌ ${e}</div>`).join('');
+                // Auto-hide after 6 seconds
+                setTimeout(() => { uploadErrors.style.display = 'none'; }, 6000);
+            } else {
+                uploadErrors.style.display = 'none';
+            }
         }
-        if (uploadBtn) uploadBtn.disabled = selectedFiles.length === 0;
+
+        renderFilePreview();
+    }
+
+    // ── Remove a single file ─────────────────────
+    function removeFile(index) {
+        selectedFiles.splice(index, 1);
+        renderFilePreview();
+    }
+    // Expose for onclick
+    window._removeFile = removeFile;
+
+    // ── Clear all files ──────────────────────────
+    function clearAllFiles() {
+        selectedFiles = [];
+        renderFilePreview();
+    }
+
+    // ── Render the full preview ──────────────────
+    function renderFilePreview() {
+        // Build person groups from selected files
+        const groups = {};
+        for (const file of selectedFiles) {
+            const parsed = parseFilename(file.name);
+            if (!parsed) continue;
+            if (!groups[parsed.person]) groups[parsed.person] = [];
+            groups[parsed.person].push(file);
+        }
+
+        // Toolbar
+        if (selectionToolbar) {
+            if (selectedFiles.length > 0) {
+                selectionToolbar.style.display = 'flex';
+                selectionCount.textContent = `${selectedFiles.length} file${selectedFiles.length !== 1 ? 's' : ''} selected`;
+            } else {
+                selectionToolbar.style.display = 'none';
+            }
+        }
+
+        // Person grouping chips
+        if (personGroups) {
+            if (Object.keys(groups).length > 0) {
+                personGroups.innerHTML = Object.entries(groups).map(([person, files]) =>
+                    `<div class="person-chip">
+                        <span class="person-chip-avatar">${person.charAt(0).toUpperCase()}</span>
+                        <strong>${person}</strong>
+                        <span class="person-chip-count">${files.length} photo${files.length !== 1 ? 's' : ''}</span>
+                    </div>`
+                ).join('');
+            } else {
+                personGroups.innerHTML = '';
+            }
+        }
+
+        // File preview cards with thumbnails
+        if (filePreview) {
+            if (selectedFiles.length === 0) {
+                filePreview.innerHTML = '';
+            } else {
+                filePreview.innerHTML = selectedFiles.map((file, idx) => {
+                    const parsed = parseFilename(file.name);
+                    const thumbId = `thumb-${idx}`;
+                    return `<div class="file-card" data-index="${idx}">
+                        <div class="file-card-thumb" id="${thumbId}"></div>
+                        <div class="file-card-info">
+                            <div class="file-card-name" title="${file.name}">${file.name}</div>
+                            <div class="file-card-meta">${parsed ? parsed.person + ' #' + parsed.seq : '—'} · ${formatSize(file.size)}</div>
+                        </div>
+                        <button type="button" class="file-card-remove" onclick="window._removeFile(${idx})" title="Remove">&times;</button>
+                    </div>`;
+                }).join('');
+
+                // Generate thumbnails
+                selectedFiles.forEach((file, idx) => {
+                    const thumbEl = document.getElementById(`thumb-${idx}`);
+                    if (thumbEl && file.type.startsWith('image/')) {
+                        const reader = new FileReader();
+                        reader.onload = (e) => {
+                            thumbEl.style.backgroundImage = `url(${e.target.result})`;
+                        };
+                        reader.readAsDataURL(file);
+                    }
+                });
+            }
+        }
+
+        // Upload button state
+        if (uploadBtn) {
+            uploadBtn.disabled = selectedFiles.length === 0;
+        }
     }
 
     // ── Upload photos ────────────────────────────
     if (uploadBtn) {
         uploadBtn.addEventListener('click', async () => {
             if (selectedFiles.length === 0) return;
+
             const formData = new FormData();
             selectedFiles.forEach(file => formData.append('photos', file));
+
+            // UI: disable button, show spinner
             uploadBtn.disabled = true;
-            uploadBtn.textContent = 'Uploading...';
+            if (uploadBtnText) uploadBtnText.textContent = 'Uploading...';
+            if (uploadSpinner) uploadSpinner.style.display = 'inline-block';
+            if (uploadErrors) uploadErrors.style.display = 'none';
+
             try {
                 const resp = await fetch(`/api/projects/${projectId}/photos`, {
                     method: 'POST',
                     headers: { 'Authorization': 'Bearer ' + token },
                     body: formData
                 });
-                if (resp.ok) {
-                    const data = await resp.json();
-                    alert(`Uploaded ${data.uploaded} photo(s). Persons: ${data.persons_created.join(', ')}`);
-                    // Show scenario form after upload
-                    document.getElementById('scenario-form').style.display = 'block';
-                    uploadBtn.textContent = 'Upload More Photos';
-                    window.location.reload();
+
+                // Try to parse response body
+                let body = null;
+                const contentType = resp.headers.get('content-type') || '';
+                if (contentType.includes('application/json')) {
+                    try { body = await resp.json(); } catch (e) { /* not JSON */ }
                 } else {
-                    const err = await resp.json();
-                    alert(err.detail || 'Upload failed');
-                    uploadBtn.textContent = 'Upload Photos';
+                    const text = await resp.text();
+                    try { body = JSON.parse(text); } catch (e) { /* plain text */ }
+                }
+
+                if (resp.ok) {
+                    const count = body ? body.uploaded : selectedFiles.length;
+                    const persons = body && body.persons_created ? body.persons_created.join(', ') : '';
+                    // Clear selection
+                    selectedFiles = [];
+                    renderFilePreview();
+                    // Show success message inline
+                    showUploadSuccess(count, persons);
+                    // Show scenario form
+                    const scenarioForm = document.getElementById('scenario-form');
+                    if (scenarioForm) scenarioForm.style.display = 'block';
+                    // Reload to refresh existing photos
+                    setTimeout(() => window.location.reload(), 1200);
+                } else {
+                    // Extract human-readable error from FastAPI response
+                    let errorMsg = 'Upload failed.';
+                    if (body) {
+                        if (typeof body.detail === 'string') {
+                            errorMsg = body.detail;
+                        } else if (Array.isArray(body.detail)) {
+                            // FastAPI 422 validation errors
+                            errorMsg = body.detail.map(e => {
+                                const loc = e.loc ? e.loc.join(' → ') : '';
+                                return loc ? `${loc}: ${e.msg}` : e.msg;
+                            }).join('\n');
+                        }
+                    }
+                    showUploadError(errorMsg);
                 }
             } catch (err) {
-                alert('Network error: ' + err.message);
-                uploadBtn.textContent = 'Upload Photos';
+                showUploadError('Network error: ' + err.message);
             } finally {
-                uploadBtn.disabled = false;
+                uploadBtn.disabled = selectedFiles.length === 0;
+                if (uploadBtnText) uploadBtnText.textContent = 'Upload Photos';
+                if (uploadSpinner) uploadSpinner.style.display = 'none';
             }
         });
     }
 
-    // ── Load scenario if exists ──────────────────
-    fetch(`/api/projects/${projectId}/scenario`, { headers })
-        .then(r => { if (!r.ok) return null; return r.json(); })
-        .then(data => {
-            if (!data) {
-                // No scenario yet — show the form
-                document.getElementById('scenario-form').style.display = 'block';
-                return;
-            }
+    // ── Inline success / error messages ──────────
+    function showUploadSuccess(count, persons) {
+        if (!uploadErrors) return;
+        uploadErrors.className = 'upload-success';
+        uploadErrors.style.display = 'block';
+        uploadErrors.innerHTML = `<div class="upload-success-item">✅ Uploaded ${count} photo(s) successfully${persons ? '. Persons: ' + persons : ''}.</div>`;
+    }
 
-            document.getElementById('scenario-display').innerHTML =
-                `<p class="scenario-text">${data.text}</p>`;
-
-            const badge = document.getElementById('moderation-badge');
-            badge.style.display = 'inline-block';
-            badge.textContent = data.moderation_status;
-            badge.className = `moderation-badge badge badge-${data.moderation_status}`;
-
-            if (data.rejection_reason) {
-                const reason = document.getElementById('rejection-reason');
-                reason.style.display = 'block';
-                reason.textContent = '⚠️ ' + data.rejection_reason;
-                // Allow resubmission if rejected
-                document.getElementById('scenario-form').style.display = 'block';
-            }
-
-            // Show segments
-            if (data.segments && data.segments.length > 0) {
-                const section = document.getElementById('segments-section');
-                section.style.display = 'block';
-                const list = document.getElementById('segment-list');
-                data.segments.forEach(seg => {
-                    const li = document.createElement('li');
-                    li.className = `segment-item segment-${seg.generation_status}`;
-                    li.innerHTML = `<span class="seg-num">#${seg.sequence_number}</span> ${seg.description}
-                        <span class="seg-status badge badge-${seg.generation_status}">${seg.generation_status}</span>`;
-                    list.appendChild(li);
-                });
-
-                // Enable generation if approved
-                if (data.moderation_status === 'approved') {
-                    document.getElementById('generation-controls').style.display = 'block';
-                    document.getElementById('start-generation').disabled = false;
-                }
-            }
-        });
+    function showUploadError(msg) {
+        if (!uploadErrors) return;
+        uploadErrors.className = 'upload-errors';
+        uploadErrors.style.display = 'block';
+        uploadErrors.innerHTML = `<div class="upload-error-item">❌ ${msg.replace(/\n/g, '<br>')}</div>`;
+    }
 
     // ── Submit scenario ──────────────────────────
     const submitBtn = document.getElementById('submit-scenario');
@@ -315,7 +606,12 @@
             const text = scenarioInput.value.trim();
             if (!text) { alert('Please write a scenario first.'); return; }
             submitBtn.disabled = true;
-            submitBtn.textContent = 'Submitting...';
+            const btnText = document.getElementById('scenario-btn-text');
+            const btnSpinner = document.getElementById('scenario-spinner');
+            if (btnText) btnText.textContent = 'Analyzing scenario...';
+            if (btnSpinner) btnSpinner.style.display = 'inline-block';
+            // Show inline status indicator
+            showScenarioStatus('⏳ Sending scenario to AI for moderation and splitting... This may take a moment.');
             try {
                 const resp = await fetch(`/api/projects/${projectId}/scenario`, {
                     method: 'PUT',
@@ -323,18 +619,117 @@
                     body: JSON.stringify({ text })
                 });
                 if (resp.ok) {
-                    window.location.reload();
+                    showScenarioStatus('✅ Scenario analyzed successfully! Reloading...');
+                    setTimeout(() => window.location.reload(), 600);
                 } else {
-                    const err = await resp.json();
-                    alert(err.detail || 'Failed to submit scenario');
+                    let msg = 'Failed to submit scenario';
+                    try {
+                        const ct = resp.headers.get('content-type') || '';
+                        if (ct.includes('application/json')) {
+                            const err = await resp.json();
+                            msg = typeof err.detail === 'string' ? err.detail
+                                : Array.isArray(err.detail) ? err.detail.map(e => e.msg || JSON.stringify(e)).join('\n')
+                                : JSON.stringify(err.detail);
+                        } else {
+                            msg = await resp.text() || msg;
+                        }
+                    } catch (_) { /* ignore parse errors */ }
+                    showScenarioStatus('❌ ' + msg, true);
                 }
             } catch (err) {
-                alert('Network error: ' + err.message);
+                showScenarioStatus('❌ Network error: ' + err.message, true);
             } finally {
                 submitBtn.disabled = false;
-                submitBtn.textContent = 'Submit Scenario';
+                if (btnText) btnText.textContent = 'Submit Scenario';
+                if (btnSpinner) btnSpinner.style.display = 'none';
             }
         });
+    }
+
+    // ── Inline scenario status indicator ─────────
+    function showScenarioStatus(msg, isError) {
+        let el = document.getElementById('scenario-status-indicator');
+        if (!el) {
+            el = document.createElement('div');
+            el.id = 'scenario-status-indicator';
+            const form = document.getElementById('scenario-form');
+            if (form) form.appendChild(el);
+        }
+        el.className = isError ? 'status-indicator status-indicator--error' : 'status-indicator status-indicator--loading';
+        el.textContent = msg;
+        el.style.display = 'block';
+    }
+
+    // ── Edit scenario button ─────────────────────
+    const editScenarioBtn = document.getElementById('edit-scenario-btn');
+    if (editScenarioBtn) {
+        editScenarioBtn.addEventListener('click', () => {
+            // Show the scenario form for editing
+            const form = document.getElementById('scenario-form');
+            form.style.display = 'block';
+            // Pre-fill textarea with current scenario text
+            const scenarioText = document.querySelector('.scenario-text');
+            if (scenarioText && scenarioInput) {
+                scenarioInput.value = scenarioText.textContent;
+                charCount.textContent = `${scenarioInput.value.length} / 10000`;
+            }
+            scenarioInput.focus();
+            editScenarioBtn.style.display = 'none';
+            // Scroll to the form
+            form.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        });
+    }
+
+    // ── Regenerate segments button ───────────────
+    const regenBtn = document.getElementById('regenerate-segments-btn');
+    if (regenBtn) {
+        regenBtn.addEventListener('click', async () => {
+            // Get current scenario text
+            const scenarioText = document.querySelector('.scenario-text');
+            if (!scenarioText) { alert('No scenario found to regenerate.'); return; }
+            if (!confirm('Regenerate segments from the current scenario? Existing segments will be replaced.')) return;
+
+            regenBtn.disabled = true;
+            regenBtn.innerHTML = '🔄 Regenerating... <span class="spinner"></span>';
+            showSegmentStatus('⏳ Regenerating segments via AI... This may take a moment.');
+
+            try {
+                const resp = await fetch(`/api/projects/${projectId}/scenario`, {
+                    method: 'PUT',
+                    headers: { ...headers, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text: scenarioText.textContent })
+                });
+                if (resp.ok) {
+                    showSegmentStatus('✅ Segments regenerated! Reloading...');
+                    setTimeout(() => window.location.reload(), 600);
+                } else {
+                    let msg = 'Failed to regenerate segments';
+                    try {
+                        const err = await resp.json();
+                        msg = typeof err.detail === 'string' ? err.detail : JSON.stringify(err.detail);
+                    } catch (_) {}
+                    showSegmentStatus('❌ ' + msg, true);
+                }
+            } catch (err) {
+                showSegmentStatus('❌ Network error: ' + err.message, true);
+            } finally {
+                regenBtn.disabled = false;
+                regenBtn.innerHTML = '🔄 Regenerate Segments';
+            }
+        });
+    }
+
+    function showSegmentStatus(msg, isError) {
+        let el = document.getElementById('segment-status-indicator');
+        if (!el) {
+            el = document.createElement('div');
+            el.id = 'segment-status-indicator';
+            const section = document.getElementById('segments-section');
+            if (section) section.appendChild(el);
+        }
+        el.className = isError ? 'status-indicator status-indicator--error' : 'status-indicator status-indicator--loading';
+        el.textContent = msg;
+        el.style.display = 'block';
     }
 
     // ── Poll progress for generating projects ────
@@ -345,28 +740,197 @@
             .then(data => {
                 const section = document.getElementById('progress-section');
                 section.style.display = 'block';
-                document.getElementById('progress-status').textContent =
-                    `Status: ${data.status} — Segment ${data.current_segment || '?'} of ${data.total_segments || '?'}`;
 
-                if (data.status === 'completed' || data.status === 'failed') {
-                    clearInterval(pollInterval);
-                    if (data.status === 'completed') {
-                        window.location.reload();
+                // Update message
+                const msgEl = document.getElementById('progress-message');
+                if (data.status === 'failed') {
+                    msgEl.className = 'status-indicator status-indicator--error';
+                } else if (data.status === 'completed') {
+                    msgEl.className = 'status-indicator status-indicator--success';
+                } else {
+                    msgEl.className = 'status-indicator status-indicator--loading';
+                }
+                msgEl.textContent = data.message || `Status: ${data.status}`;
+
+                // Update progress bar
+                if (data.total_segments && data.total_segments > 0) {
+                    const barContainer = document.getElementById('progress-bar-container');
+                    barContainer.style.display = 'flex';
+                    const pct = Math.round((data.completed_segments / data.total_segments) * 100);
+                    document.getElementById('progress-bar-fill').style.width = pct + '%';
+                    document.getElementById('progress-percent').textContent = pct + '%';
+                }
+
+                // Render clip-by-clip progress
+                if (data.clips && data.clips.length > 0) {
+                    const grid = document.getElementById('clip-progress');
+                    grid.innerHTML = data.clips.map(clip => {
+                        let icon, statusClass;
+                        switch (clip.status) {
+                            case 'completed': icon = '✅'; statusClass = 'clip-tile--completed'; break;
+                            case 'generating': icon = '⏳'; statusClass = 'clip-tile--generating'; break;
+                            case 'failed': icon = '❌'; statusClass = 'clip-tile--failed'; break;
+                            default: icon = '⬜'; statusClass = 'clip-tile--pending'; break;
+                        }
+                        const retryInfo = clip.retry_count > 0 ? ` (retry ${clip.retry_count})` : '';
+                        const errorInfo = clip.error_message ? `<div class="clip-tile-error" title="${clip.error_message}">⚠️ ${clip.error_message.substring(0, 60)}...</div>` : '';
+                        return `<div class="clip-tile ${statusClass}">
+                            <span class="clip-tile-icon">${icon}</span>
+                            <span class="clip-tile-label">Clip ${clip.sequence_number}${retryInfo}</span>
+                            ${errorInfo}
+                        </div>`;
+                    }).join('');
+
+                    // Show completed clip video previews in real time
+                    const completedClips = data.clips.filter(c => c.status === 'completed');
+                    if (completedClips.length > 0) {
+                        const clipsSection = document.getElementById('clips-section');
+                        clipsSection.style.display = 'block';
+                        const previews = document.getElementById('clip-previews');
+                        previews.innerHTML = completedClips.map(c => {
+                            const clipUrl = `/generated/${projectId}/clips/clip_${String(c.sequence_number).padStart(3, '0')}.mp4`;
+                            return `<div class="clip-preview-card">
+                                <video controls class="clip-preview-video" preload="metadata">
+                                    <source src="${clipUrl}" type="video/mp4">
+                                </video>
+                                <span class="clip-preview-label">Clip ${c.sequence_number}</span>
+                            </div>`;
+                        }).join('');
                     }
                 }
+
+                // Handle completion
+                if (data.status === 'completed') {
+                    clearInterval(pollInterval);
+                    const genBtn = document.getElementById('start-generation');
+                    const genBtnText = document.getElementById('gen-btn-text');
+                    const genSpinner = document.getElementById('gen-spinner');
+                    const abortBtn = document.getElementById('abort-generation');
+                    if (genBtnText) genBtnText.textContent = '🎬 Start Generation';
+                    if (genSpinner) genSpinner.style.display = 'none';
+                    if (genBtn) genBtn.disabled = true;
+                    if (abortBtn) abortBtn.style.display = 'none';
+
+                    // Show video player if final video URL available
+                    if (data.final_video_url) {
+                        const videoSection = document.getElementById('video-section');
+                        videoSection.style.display = 'block';
+                        document.getElementById('video-source').src = data.final_video_url;
+                        document.getElementById('video-player').load();
+                        document.getElementById('download-btn').href = data.final_video_url;
+                    }
+
+                    // Show individual clip previews
+                    if (data.clips && data.clips.length > 0) {
+                        const clipsSection = document.getElementById('clips-section');
+                        clipsSection.style.display = 'block';
+                        const previews = document.getElementById('clip-previews');
+                        previews.innerHTML = data.clips
+                            .filter(c => c.status === 'completed')
+                            .map(c => {
+                                const clipUrl = `/generated/${projectId}/clips/clip_${String(c.sequence_number).padStart(3, '0')}.mp4`;
+                                return `<div class="clip-preview-card">
+                                    <video controls class="clip-preview-video" preload="metadata">
+                                        <source src="${clipUrl}" type="video/mp4">
+                                    </video>
+                                    <span class="clip-preview-label">Clip ${c.sequence_number}</span>
+                                </div>`;
+                            }).join('');
+                    }
+                } else if (data.status === 'failed') {
+                    clearInterval(pollInterval);
+                    const genBtn = document.getElementById('start-generation');
+                    const genBtnText = document.getElementById('gen-btn-text');
+                    const genSpinner = document.getElementById('gen-spinner');
+                    const abortBtn = document.getElementById('abort-generation');
+                    if (genBtn) genBtn.disabled = false;
+                    if (genBtnText) genBtnText.textContent = '🎬 Retry Generation';
+                    if (genSpinner) genSpinner.style.display = 'none';
+                    if (abortBtn) abortBtn.style.display = 'inline-flex';
+                }
+            })
+            .catch(err => {
+                console.warn('Poll error:', err);
             });
     }
 
     document.getElementById('start-generation')?.addEventListener('click', () => {
+        const genBtn = document.getElementById('start-generation');
+        const genBtnText = document.getElementById('gen-btn-text');
+        const genSpinner = document.getElementById('gen-spinner');
+        const abortBtn = document.getElementById('abort-generation');
+        genBtn.disabled = true;
+        if (genBtnText) genBtnText.textContent = 'Starting generation...';
+        if (genSpinner) genSpinner.style.display = 'inline-block';
+        if (abortBtn) abortBtn.style.display = 'inline-flex';
+
+        // Show progress section immediately with initial status
+        const progressSection = document.getElementById('progress-section');
+        progressSection.style.display = 'block';
+        document.getElementById('progress-message').textContent = '⏳ Initiating video generation pipeline... Please wait.';
+        document.getElementById('progress-message').className = 'status-indicator status-indicator--loading';
+
         fetch(`/api/projects/${projectId}/generate`, {
             method: 'POST',
             headers
         }).then(r => {
             if (r.ok) {
-                pollInterval = setInterval(pollProgress, 5000);
-                pollProgress();
+                if (genBtnText) genBtnText.textContent = 'Generating...';
+                document.getElementById('progress-message').textContent = '🎬 Generation started — polling for updates...';
+                pollInterval = setInterval(pollProgress, 3000);
+                // First poll after a short delay to give pipeline time to create clip records
+                setTimeout(pollProgress, 2000);
+            } else {
+                genBtn.disabled = false;
+                if (genBtnText) genBtnText.textContent = '🎬 Start Generation';
+                if (genSpinner) genSpinner.style.display = 'none';
+                if (abortBtn) abortBtn.style.display = 'none';
+                r.json().then(err => {
+                    const detail = err.detail || 'Failed to start generation.';
+                    document.getElementById('progress-message').textContent = '❌ ' + detail;
+                }).catch(() => {
+                    document.getElementById('progress-message').textContent = '❌ Failed to start generation. Please try again.';
+                });
+                document.getElementById('progress-message').className = 'status-indicator status-indicator--error';
             }
+        }).catch(() => {
+            genBtn.disabled = false;
+            if (genBtnText) genBtnText.textContent = '🎬 Start Generation';
+            if (genSpinner) genSpinner.style.display = 'none';
+            if (abortBtn) abortBtn.style.display = 'none';
+            document.getElementById('progress-message').textContent = '❌ Network error — could not start generation.';
+            document.getElementById('progress-message').className = 'status-indicator status-indicator--error';
         });
+    });
+
+    // ── Abort generation ─────────────────────────
+    document.getElementById('abort-generation')?.addEventListener('click', async () => {
+        if (!confirm('Abort the current generation? You can re-start it later.')) return;
+
+        const abortBtn = document.getElementById('abort-generation');
+        abortBtn.disabled = true;
+        abortBtn.textContent = '⏹️ Aborting...';
+
+        try {
+            const resp = await fetch(`/api/projects/${projectId}/abort`, {
+                method: 'POST',
+                headers
+            });
+            if (resp.ok) {
+                clearInterval(pollInterval);
+                // Reload page to show clean state
+                window.location.reload();
+            } else {
+                const err = await resp.json().catch(() => ({}));
+                alert(err.detail || 'Failed to abort generation.');
+                abortBtn.disabled = false;
+                abortBtn.textContent = '⏹️ Abort Generation';
+            }
+        } catch (e) {
+            alert('Network error: ' + e.message);
+            abortBtn.disabled = false;
+            abortBtn.textContent = '⏹️ Abort Generation';
+        }
     });
 })();
 </script>

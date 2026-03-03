@@ -25,8 +25,12 @@ class PipelineStatusResponse(BaseModel):
     status: str
     current_segment: int | None = None
     total_segments: int | None = None
+    completed_segments: int = 0
+    failed_segments: int = 0
+    message: str = ""
     clips: list[ClipStatusResponse] = []
     estimated_cost: float | None = None
+    final_video_url: str | None = None
 
 
 class FinalVideoResponse(BaseModel):

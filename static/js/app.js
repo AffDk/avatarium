@@ -109,51 +109,68 @@ if (dropzone) {
         dropzone.classList.remove('dragover');
         handleFiles(Array.from(e.dataTransfer.files));
     });
+
+    // Click opens file picker (but not when clicking browse — handled separately)
+    dropzone.addEventListener('click', (e) => {
+        if (e.target.id === 'browse-btn') return;
+        if (fileInput) fileInput.click();
+    });
+}
+
+// Browse button (stop propagation to avoid double-trigger from dropzone)
+const browseBtn = document.getElementById('browse-btn');
+if (browseBtn && fileInput) {
+    browseBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        fileInput.click();
+    });
 }
 
 if (fileInput) {
     fileInput.addEventListener('change', () => {
         handleFiles(Array.from(fileInput.files));
+        fileInput.value = ''; // Reset so same files can be re-selected
     });
 }
 
-function handleFiles(files) {
-    selectedFiles = [];
-    const previewHtml = [];
-    const groups = {};
-
-    for (const file of files) {
+function handleFiles(newFiles) {
+    // Accumulate new valid files into selectedFiles
+    for (const file of newFiles) {
         const validation = validateFilename(file.name);
 
-        if (!validation.valid) {
-            previewHtml.push(
-                `<div class="file-item file-invalid">❌ ${file.name} — ${validation.error}</div>`
-            );
-            continue;
-        }
-
-        if (file.size > MAX_FILE_SIZE) {
-            previewHtml.push(
-                `<div class="file-item file-invalid">❌ ${file.name} — Exceeds 10 MB</div>`
-            );
-            continue;
-        }
+        if (!validation.valid) continue;
+        if (file.size > MAX_FILE_SIZE) continue;
 
         const parsed = parseFilename(file.name);
         if (!parsed) continue;
 
+        // Skip duplicates
+        if (selectedFiles.some(f => f.name === file.name && f.size === file.size)) {
+            continue;
+        }
+
+        selectedFiles.push(file);
+    }
+
+    renderPreview();
+}
+
+function renderPreview() {
+    const groups = {};
+    const previewHtml = [];
+
+    for (const file of selectedFiles) {
+        const parsed = parseFilename(file.name);
+        if (!parsed) continue;
         previewHtml.push(
             `<div class="file-item file-valid">✅ ${file.name} → ${parsed.person} #${parsed.seq}</div>`
         );
-
         if (!groups[parsed.person]) groups[parsed.person] = [];
         groups[parsed.person].push(file);
-        selectedFiles.push(file);
     }
 
     if (filePreview) filePreview.innerHTML = previewHtml.join('');
 
-    // Person grouping preview
     if (personGroups) {
         const groupHtml = Object.entries(groups).map(([person, files]) =>
             `<div class="person-group">
@@ -185,18 +202,39 @@ if (uploadBtn) {
                 body: formData
             });
 
+            // Parse response safely
+            let body = null;
+            try { body = await resp.json(); } catch (e) { /* not JSON */ }
+
             if (resp.ok) {
-                const data = await resp.json();
-                alert(`Uploaded ${data.uploaded} photo(s). Persons: ${data.persons_created.join(', ')}`);
+                const count = body ? body.uploaded : selectedFiles.length;
+                const persons = body && body.persons_created ? body.persons_created.join(', ') : '';
+                alert(`Uploaded ${count} photo(s).${persons ? ' Persons: ' + persons : ''}`);
                 uploadBtn.textContent = 'Upload More Photos';
+                selectedFiles = [];
+                renderPreview();
             } else {
-                const err = await resp.json();
-                alert(err.detail || 'Upload failed');
+                // Handle FastAPI error responses properly
+                let errorMsg = 'Upload failed';
+                if (body) {
+                    if (typeof body.detail === 'string') {
+                        errorMsg = body.detail;
+                    } else if (Array.isArray(body.detail)) {
+                        errorMsg = body.detail.map(e => {
+                            const loc = e.loc ? e.loc.join(' → ') : '';
+                            return loc ? `${loc}: ${e.msg}` : e.msg;
+                        }).join('\n');
+                    }
+                }
+                alert(errorMsg);
             }
         } catch (err) {
             alert('Network error: ' + err.message);
         } finally {
-            uploadBtn.disabled = false;
+            uploadBtn.disabled = selectedFiles.length === 0;
+            if (uploadBtn.textContent === 'Uploading...') {
+                uploadBtn.textContent = 'Upload Photos';
+            }
         }
     });
 }

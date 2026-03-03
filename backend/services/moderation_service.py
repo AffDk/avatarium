@@ -3,6 +3,9 @@
 Uses a single combined prompt per research.md Decision 4:
 one API call for both moderation and splitting.
 Model is configurable via GEMINI_MODEL env var (default: gemini-2.5-flash).
+
+Supports multimodal input: when reference photos are provided, they are sent
+alongside the text prompt so Gemini can describe characters accurately.
 """
 
 import json
@@ -11,6 +14,7 @@ import re
 from typing import Any
 
 import google.generativeai as genai
+from PIL import Image
 
 from backend.config import settings
 
@@ -38,6 +42,12 @@ SPLITTING RULES:
 - Maintain narrative flow between segments
 - Include visual details suitable for image-to-video generation
 
+MOVEMENT DIRECTION & CONTINUITY RULES:
+- For each segment, explicitly state the direction of movement of every character (e.g., "walking left to right", "moving toward the camera", "turning from left to right").
+- The direction of movement of a character MUST stay consistent across consecutive segments unless the scenario explicitly calls for a change.
+- If a character was moving left-to-right in one segment, they must continue left-to-right in the next unless the narrative requires them to stop or turn around — and that turn must be described explicitly.
+- Never abruptly reverse a character's direction between segments without narrative justification.
+
 SCENARIO:
 {scenario_text}
 {characters_section}
@@ -57,13 +67,44 @@ If approved, provide 1-15 segments covering the full scenario.
 """
 
 # Appended to the prompt when person_names is provided and non-empty.
-_CHARACTERS_SECTION = """
+_CHARACTERS_SECTION_WITH_PHOTOS = """
+CHARACTERS (known persons from uploaded photos — reference photos are attached below):
+{person_names_csv}
+
+IMPORTANT RULES FOR CHARACTERS:
+- Reference photos for each character are attached to this message. Study them carefully.
+- Describe each character's ACTUAL visual appearance based on the attached reference photos — do NOT invent or guess traits.
+- Include accurate details: hair color, hair style, skin tone, approximate age, clothing, build, and any distinguishing features EXACTLY as seen in the photos.
+- Use EXACTLY the same visual description every time a character appears — do NOT paraphrase or add traits.
+- Introduce each character's visual traits the first time they appear.
+- In each segment description, include "as seen in the reference photo" when mentioning a character's appearance.
+- Describe spatial relationships between characters (e.g., "Alice stands facing Bob") — do NOT use frame positions like "left of frame".
+- The "characters" field in the JSON output MUST map each character name to their visual description derived from the reference photos.
+- Each segment's "persons" array MUST list only the character names who appear in that segment (lowercase).
+- Only use character names from the list above — do NOT invent new character names.
+
+EXAMPLE OUTPUT (with characters):
+{{
+    "approved": true,
+    "rejection_reason": null,
+    "characters": {{
+        "alice": "tall woman with straight dark brown hair, light skin, wearing a red jacket as seen in the reference photo",
+        "bob": "stocky man with short black hair, round glasses, wearing a blue denim jacket as seen in the reference photo"
+    }},
+    "segments": [
+        {{"sequence_number": 1, "description": "Alice, a tall woman with straight dark brown hair in a red jacket as seen in the reference photo, walks left to right into the park.", "persons": ["alice"]}},
+        {{"sequence_number": 2, "description": "Alice, the tall woman with dark brown hair in the red jacket, continues walking left to right and waves to Bob, a stocky man with short black hair and round glasses in a blue denim jacket as seen in the reference photo, who approaches from the right.", "persons": ["alice", "bob"]}}
+    ]
+}}
+"""
+
+_CHARACTERS_SECTION_NO_PHOTOS = """
 CHARACTERS (known persons from uploaded photos):
 {person_names_csv}
 
 IMPORTANT RULES FOR CHARACTERS:
 - Reference each character by their given name in every segment where they appear.
-- Invent a short, distinguishing visual description (2-3 traits: clothing, hair, build) for each character.
+- Provide a short, distinguishing visual description (2-3 traits: clothing, hair, build) for each character.
 - Use EXACTLY the same visual description every time a character appears — do NOT paraphrase or add traits.
 - Introduce each character's visual traits the first time they appear.
 - Describe spatial relationships between characters (e.g., "Alice stands facing Bob") — do NOT use frame positions like "left of frame".
@@ -80,26 +121,69 @@ EXAMPLE OUTPUT (with characters):
         "bob": "stocky man with round glasses and a blue denim jacket"
     }},
     "segments": [
-        {{"sequence_number": 1, "description": "Alice, a tall woman with curly red hair and a green dress, walks into the park.", "persons": ["alice"]}},
-        {{"sequence_number": 2, "description": "Alice, the tall redhead in the green dress, waves to Bob, a stocky man with round glasses and a blue denim jacket, who approaches from across the path.", "persons": ["alice", "bob"]}}
+        {{"sequence_number": 1, "description": "Alice, a tall woman with curly red hair and a green dress, walks left to right into the park.", "persons": ["alice"]}},
+        {{"sequence_number": 2, "description": "Alice, the tall redhead in the green dress, continues left to right and waves to Bob, a stocky man with round glasses and a blue denim jacket, who approaches from the right.", "persons": ["alice", "bob"]}}
     ]
 }}
 """
 
 
-async def _call_gemini(prompt: str) -> str:
+def _load_photo_images(photo_paths: dict[str, list[str]]) -> list[tuple[str, Image.Image]]:
+    """Load photo files as PIL Images for multimodal Gemini input.
+
+    Args:
+        photo_paths: Mapping of person_name → list of file paths.
+
+    Returns:
+        List of (label, PIL.Image) tuples. Only the first photo per person is used.
+    """
+    images: list[tuple[str, Image.Image]] = []
+    for person_name, paths in sorted(photo_paths.items()):
+        for path in paths[:1]:  # Use first photo per person to keep request small
+            try:
+                img = Image.open(path)
+                # Resize large images to reduce token cost
+                max_dim = 1024
+                if max(img.size) > max_dim:
+                    ratio = max_dim / max(img.size)
+                    new_size = (int(img.size[0] * ratio), int(img.size[1] * ratio))
+                    img = img.resize(new_size, Image.LANCZOS)
+                images.append((person_name, img))
+                logger.info("Loaded reference photo for '%s': %s", person_name, path)
+            except Exception as exc:
+                logger.warning("Failed to load photo for '%s' at %s: %s", person_name, path, exc)
+    return images
+
+
+async def _call_gemini(prompt: str, images: list[tuple[str, Image.Image]] | None = None) -> str:
     """Call Gemini and return the text response.
 
     This function is separated for easy mocking in tests.
     Uses response_mime_type="application/json" for reliable JSON output (Decision 2).
+    Supports multimodal input when images are provided.
     """
     model = genai.GenerativeModel(settings.gemini_model)
-    response = await model.generate_content_async(
-        prompt,
-        generation_config=genai.GenerationConfig(
-            response_mime_type="application/json",
-        ),
-    )
+
+    if images:
+        # Build multimodal content: text prompt + labeled images
+        content: list[Any] = [prompt]
+        for person_name, img in images:
+            content.append(f"\n[Reference photo for {person_name}]:")
+            content.append(img)
+        logger.info("Sending multimodal request to Gemini with %d reference photos", len(images))
+        response = await model.generate_content_async(
+            content,
+            generation_config=genai.GenerationConfig(
+                response_mime_type="application/json",
+            ),
+        )
+    else:
+        response = await model.generate_content_async(
+            prompt,
+            generation_config=genai.GenerationConfig(
+                response_mime_type="application/json",
+            ),
+        )
     return response.text
 
 
@@ -190,12 +274,16 @@ def parse_gemini_response(
 async def moderate_and_split(
     scenario_text: str,
     person_names: list[str] | None = None,
+    photo_paths: dict[str, list[str]] | None = None,
 ) -> dict[str, Any]:
     """Moderate scenario content and split into segments using Gemini.
 
     Args:
         scenario_text: The raw scenario text to moderate and split.
         person_names: Known person names from uploaded photos. None = no persons.
+        photo_paths: Mapping of person_name → list of photo file paths for
+                     multimodal analysis. When provided, Gemini sees the actual
+                     photos and describes characters accurately.
 
     Returns:
         Dict with keys: approved (bool), rejection_reason (str|None),
@@ -206,10 +294,25 @@ async def moderate_and_split(
         ValueError: If response cannot be parsed.
     """
     # Build the characters section only when person_names is non-empty
+    images: list[tuple[str, Image.Image]] | None = None
     if person_names:
-        characters_section = _CHARACTERS_SECTION.format(
-            person_names_csv=", ".join(person_names),
-        )
+        if photo_paths:
+            # Use the photo-aware prompt that instructs Gemini to describe
+            # characters from the attached reference images
+            characters_section = _CHARACTERS_SECTION_WITH_PHOTOS.format(
+                person_names_csv=", ".join(person_names),
+            )
+            images = _load_photo_images(photo_paths)
+            if not images:
+                # Fallback if all photos failed to load
+                characters_section = _CHARACTERS_SECTION_NO_PHOTOS.format(
+                    person_names_csv=", ".join(person_names),
+                )
+                images = None
+        else:
+            characters_section = _CHARACTERS_SECTION_NO_PHOTOS.format(
+                person_names_csv=", ".join(person_names),
+            )
     else:
         characters_section = ""
 
@@ -220,13 +323,14 @@ async def moderate_and_split(
 
     logger.info(
         "Sending moderation request to Gemini | "
-        "scenario_length=%d person_names=%s",
+        "scenario_length=%d person_names=%s photos=%s",
         len(scenario_text),
         person_names or [],
+        bool(images),
     )
     logger.info("Gemini prompt:\n%s", prompt)
 
-    raw_response = await _call_gemini(prompt)
+    raw_response = await _call_gemini(prompt, images=images)
 
     logger.debug("Gemini raw response:\n%s", raw_response)
 

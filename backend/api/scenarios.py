@@ -1,5 +1,6 @@
 """Scenario API routes — submit, moderate, get per contracts/api.yaml."""
 
+import logging
 import uuid
 from datetime import UTC, datetime
 
@@ -21,6 +22,8 @@ from backend.schemas.scenario import (
 )
 from backend.services.moderation_service import moderate_and_split
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/projects", tags=["Scenarios"])
 
 
@@ -37,6 +40,14 @@ async def submit_scenario(
     # Extract person names for person-aware splitting
     person_names = [p.name for p in project.persons] if project.persons else []
 
+    # Collect photo file paths for multimodal Gemini analysis
+    photo_paths: dict[str, list[str]] = {}
+    if project.persons:
+        for person in project.persons:
+            paths = [photo.file_path for photo in person.photos if photo.file_path]
+            if paths:
+                photo_paths[person.name] = paths
+
     # Check if scenario already exists — if so, delete old one for re-submission
     result = await db.execute(
         select(Scenario)
@@ -49,7 +60,16 @@ async def submit_scenario(
         await db.flush()
 
     # Call Gemini for moderation + splitting
-    gemini_result = await moderate_and_split(body.text, person_names=person_names)
+    try:
+        gemini_result = await moderate_and_split(
+            body.text, person_names=person_names, photo_paths=photo_paths or None,
+        )
+    except Exception as exc:
+        logger.exception("Gemini moderation failed for project %s", project_id)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"AI moderation service error: {exc}",
+        ) from exc
 
     # Create scenario record
     moderation_status = (

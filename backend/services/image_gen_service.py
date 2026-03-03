@@ -51,7 +51,7 @@ async def generate_initial_image(
     )
     full_prompt = f"{prompt}, {style_directive}"
 
-    result = await fal_client.subscribe(
+    result = await fal_client.subscribe_async(
         settings.fal_image_model,
         arguments={
             "prompt": full_prompt,

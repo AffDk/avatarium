@@ -18,12 +18,74 @@
                     <span class="nav-user">{{ user.display_name }}</span>
                     <a href="/logout" class="nav-link nav-link--secondary">Logout</a>
                 {% else %}
-                    <a href="/login" class="nav-link">Sign In</a>
-                    <a href="/register" class="nav-link nav-link--primary">Get Started</a>
+                    <a href="javascript:void(0)" class="nav-link" onclick="openAuthModal('login')">Sign In</a>
+                    <a href="javascript:void(0)" class="nav-link nav-link--primary" onclick="openAuthModal('register')">Get Started</a>
                 {% endif %}
             </div>
         </div>
     </nav>
+
+    <!-- Auth Modal -->
+    {% if not user %}
+    <div class="modal-overlay" id="auth-modal">
+        <div class="modal">
+            <button class="modal-close" id="modal-close-btn">&times;</button>
+            <div class="auth-forms">
+                <!-- Login Form -->
+                <div class="auth-card" id="login-form">
+                    <h2>Sign In</h2>
+                    <form id="login-form-el" class="form">
+                        <div class="form-group">
+                            <label for="login-email">Email</label>
+                            <input type="email" id="login-email" name="email" required placeholder="you@example.com">
+                        </div>
+                        <div class="form-group">
+                            <label for="login-password">Password</label>
+                            <input type="password" id="login-password" name="password" required minlength="8">
+                        </div>
+                        <div id="login-error" class="form-error hidden"></div>
+                        <button type="submit" class="btn btn--primary btn--full">Sign In</button>
+                    </form>
+                    <div class="auth-divider"><span>or</span></div>
+                    <a href="/api/auth/google" class="btn btn--google btn--full">
+                        Continue with Google
+                    </a>
+                    <p class="auth-switch">
+                        Don't have an account? <a href="javascript:void(0)" onclick="toggleAuth()">Register</a>
+                    </p>
+                </div>
+
+                <!-- Register Form -->
+                <div class="auth-card hidden" id="register-form">
+                    <h2>Create Account</h2>
+                    <form id="register-form-el" class="form">
+                        <div class="form-group">
+                            <label for="reg-name">Display Name</label>
+                            <input type="text" id="reg-name" name="display_name" required maxlength="100">
+                        </div>
+                        <div class="form-group">
+                            <label for="reg-email">Email</label>
+                            <input type="email" id="reg-email" name="email" required placeholder="you@example.com">
+                        </div>
+                        <div class="form-group">
+                            <label for="reg-password">Password</label>
+                            <input type="password" id="reg-password" name="password" required minlength="8" maxlength="128">
+                        </div>
+                        <div id="register-error" class="form-error hidden"></div>
+                        <button type="submit" class="btn btn--primary btn--full">Create Account</button>
+                    </form>
+                    <div class="auth-divider"><span>or</span></div>
+                    <a href="/api/auth/google" class="btn btn--google btn--full">
+                        Continue with Google
+                    </a>
+                    <p class="auth-switch">
+                        Already have an account? <a href="javascript:void(0)" onclick="toggleAuth()">Sign In</a>
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
 
     <!-- Flash Messages -->
     {% if messages %}
@@ -56,5 +118,115 @@
     </footer>
 
     {% block scripts %}{% endblock %}
+
+    {% if not user %}
+    <script>
+    /* ── Auth Modal ──────────────────────────────── */
+    function openAuthModal(mode) {
+        const modal = document.getElementById('auth-modal');
+        const loginForm = document.getElementById('login-form');
+        const registerForm = document.getElementById('register-form');
+        if (mode === 'register') {
+            loginForm.classList.add('hidden');
+            registerForm.classList.remove('hidden');
+        } else {
+            loginForm.classList.remove('hidden');
+            registerForm.classList.add('hidden');
+        }
+        modal.classList.add('active');
+        document.body.style.overflow = 'hidden';
+    }
+
+    function closeAuthModal() {
+        const modal = document.getElementById('auth-modal');
+        modal.classList.remove('active');
+        document.body.style.overflow = '';
+    }
+
+    function toggleAuth() {
+        document.getElementById('login-form').classList.toggle('hidden');
+        document.getElementById('register-form').classList.toggle('hidden');
+    }
+
+    function showError(id, msg) {
+        const el = document.getElementById(id);
+        el.textContent = msg;
+        el.classList.remove('hidden');
+    }
+
+    function hideError(id) {
+        document.getElementById(id).classList.add('hidden');
+    }
+
+    // Close modal on overlay click or close button
+    document.getElementById('modal-close-btn').addEventListener('click', closeAuthModal);
+    document.getElementById('auth-modal').addEventListener('click', (e) => {
+        if (e.target === e.currentTarget) closeAuthModal();
+    });
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') closeAuthModal();
+    });
+
+    // Auto-open modal if URL is /login or /register
+    if (window.location.pathname === '/login') {
+        openAuthModal('login');
+    } else if (window.location.pathname === '/register') {
+        openAuthModal('register');
+    }
+
+    // ── Login form ──────────────────────────────
+    document.getElementById('login-form-el').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        hideError('login-error');
+        const email = document.getElementById('login-email').value;
+        const password = document.getElementById('login-password').value;
+
+        try {
+            const res = await fetch('/api/auth/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email, password }),
+            });
+            if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                showError('login-error', data.detail || 'Invalid email or password');
+                return;
+            }
+            const data = await res.json();
+            document.cookie = `access_token=${data.access_token}; path=/; max-age=${60 * 60}; SameSite=Lax`;
+            window.location.href = '/dashboard';
+        } catch {
+            showError('login-error', 'Network error — please try again');
+        }
+    });
+
+    // ── Register form ───────────────────────────
+    document.getElementById('register-form-el').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        hideError('register-error');
+        const display_name = document.getElementById('reg-name').value;
+        const email = document.getElementById('reg-email').value;
+        const password = document.getElementById('reg-password').value;
+
+        try {
+            const res = await fetch('/api/auth/register', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email, password, display_name }),
+            });
+            if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                showError('register-error', data.detail || 'Registration failed');
+                return;
+            }
+            const data = await res.json();
+            document.cookie = `access_token=${data.access_token}; path=/; max-age=${60 * 60}; SameSite=Lax`;
+            window.location.href = '/dashboard';
+        } catch {
+            showError('register-error', 'Network error — please try again');
+        }
+    });
+    </script>
+    {% endif %}
 </body>
 </html>

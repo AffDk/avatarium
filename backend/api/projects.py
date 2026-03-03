@@ -2,7 +2,7 @@
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -132,7 +132,7 @@ async def delete_project(
 )
 async def upload_photos(
     project_id: uuid.UUID,
-    photos: list[UploadFile],
+    photos: list[UploadFile] = File(..., description="Photo files to upload"),
     current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> PhotoUploadResponse:
@@ -218,6 +218,7 @@ async def upload_photos(
         )
         db.add(photo)
         await db.flush()
+        await db.refresh(photo)
         uploaded_photos.append(photo)
 
     return PhotoUploadResponse(

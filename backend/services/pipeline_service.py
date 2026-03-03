@@ -70,6 +70,7 @@ async def run_pipeline(
                     image_path=current_image,
                     prompt=segment["description"],
                     output_path=clip_path,
+                    style=style,
                 )
                 last_error = None
                 break

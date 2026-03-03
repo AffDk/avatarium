@@ -12,7 +12,7 @@ from slowapi.errors import RateLimitExceeded
 from starlette.middleware.sessions import SessionMiddleware
 
 from backend.config import settings
-from backend.database import create_all, dispose_engine
+from backend.database import create_all, dispose_engine, init_db
 from backend.logging_config import setup_logging
 from backend.middleware.rate_limit import limiter
 
@@ -25,6 +25,7 @@ STATIC_DIR = BASE_DIR.parent / "static"
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Startup: create tables (dev), configure logging. Shutdown: dispose engine."""
     setup_logging()
+    await init_db()
     if settings.is_development:
         await create_all()
     yield
@@ -49,6 +50,11 @@ def create_app() -> FastAPI:
 
     # ── Static files ────────────────────────────
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+    # ── Generated files (videos, images) ────────
+    generated_dir = BASE_DIR.parent / "generated"
+    generated_dir.mkdir(exist_ok=True)
+    app.mount("/generated", StaticFiles(directory=str(generated_dir)), name="generated")
 
     # ── Routers ─────────────────────────────────
     from backend.api.health import router as health_router

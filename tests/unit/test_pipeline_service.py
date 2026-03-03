@@ -29,7 +29,7 @@ class TestImageGenService:
     @patch("backend.services.image_gen_service.fal_client")
     async def test_generate_image_calls_correct_model(self, mock_fal: MagicMock, mock_dl: AsyncMock) -> None:
         """Should call the configured image model (default: fal-ai/qwen-image)."""
-        mock_fal.subscribe = AsyncMock(return_value={"images": [{"url": "https://example.com/img.jpg"}]})
+        mock_fal.subscribe_async = AsyncMock(return_value={"images": [{"url": "https://example.com/img.jpg"}]})
         mock_dl.return_value = "/tmp/test/initial_image.jpg"
 
         result = await generate_initial_image(
@@ -37,8 +37,8 @@ class TestImageGenService:
             output_dir="/tmp/test",
         )
 
-        mock_fal.subscribe.assert_called_once()
-        call_args = mock_fal.subscribe.call_args
+        mock_fal.subscribe_async.assert_called_once()
+        call_args = mock_fal.subscribe_async.call_args
         assert "qwen-image" in call_args[0][0]
         assert result == "/tmp/test/initial_image.jpg"
 
@@ -46,7 +46,7 @@ class TestImageGenService:
     @patch("backend.services.image_gen_service.fal_client")
     async def test_generate_image_returns_path(self, mock_fal: MagicMock) -> None:
         """Should return path to downloaded image."""
-        mock_fal.subscribe = AsyncMock(return_value={"images": [{"url": "https://example.com/img.jpg"}]})
+        mock_fal.subscribe_async = AsyncMock(return_value={"images": [{"url": "https://example.com/img.jpg"}]})
 
         with patch("backend.services.image_gen_service.download_file", new_callable=AsyncMock) as mock_dl:
             mock_dl.return_value = "/tmp/test/initial_image.jpg"
@@ -64,7 +64,8 @@ class TestVideoGenService:
     @patch("backend.services.video_gen_service.fal_client")
     async def test_generate_clip_calls_correct_model(self, mock_fal: MagicMock) -> None:
         """Should call fal-ai/ltx-video-13b-distilled/image-to-video."""
-        mock_fal.subscribe = AsyncMock(return_value={"video": {"url": "https://example.com/clip.mp4"}})
+        mock_fal.upload_file_async = AsyncMock(return_value="https://fal.ai/uploaded/img.jpg")
+        mock_fal.subscribe_async = AsyncMock(return_value={"video": {"url": "https://example.com/clip.mp4"}})
 
         with patch("backend.services.video_gen_service.download_file", new_callable=AsyncMock) as mock_dl:
             mock_dl.return_value = "/tmp/test/clip_1.mp4"
@@ -74,8 +75,8 @@ class TestVideoGenService:
                 output_path="/tmp/test/clip_1.mp4",
             )
 
-        mock_fal.subscribe.assert_called_once()
-        call_args = mock_fal.subscribe.call_args
+        mock_fal.subscribe_async.assert_called_once()
+        call_args = mock_fal.subscribe_async.call_args
         assert "ltx-video" in call_args[0][0]
 
     @pytest.mark.asyncio
