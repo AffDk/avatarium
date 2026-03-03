@@ -68,7 +68,7 @@ async def test_generate_accepted(client: AsyncClient) -> None:
     headers = await _register_and_get_headers(client)
     project_id = await _create_ready_project(client, headers)
 
-    with patch("backend.api.generation.launch_pipeline", new_callable=AsyncMock):
+    with patch("backend.api.generation.run_pipeline_background", new_callable=AsyncMock):
         resp = await client.post(
             f"/api/projects/{project_id}/generate",
             headers=headers,
@@ -111,7 +111,7 @@ async def test_generate_conflict_already_running(client: AsyncClient) -> None:
     project_id = await _create_ready_project(client, headers)
 
     # First generate call — should succeed (202)
-    with patch("backend.api.generation.launch_pipeline", new_callable=AsyncMock):
+    with patch("backend.api.generation.run_pipeline_background", new_callable=AsyncMock):
         resp1 = await client.post(
             f"/api/projects/{project_id}/generate",
             headers=headers,
@@ -119,7 +119,7 @@ async def test_generate_conflict_already_running(client: AsyncClient) -> None:
     assert resp1.status_code == 202
 
     # Second generate call — should conflict (409) since pipeline is already running
-    with patch("backend.api.generation.launch_pipeline", new_callable=AsyncMock):
+    with patch("backend.api.generation.run_pipeline_background", new_callable=AsyncMock):
         resp2 = await client.post(
             f"/api/projects/{project_id}/generate",
             headers=headers,

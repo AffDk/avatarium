@@ -1,6 +1,7 @@
 """Video generation service using fal.ai LTX Video 13B Distilled.
 
-Uses fal_client.subscribe_async("fal-ai/ltx-video-13b-distilled/image-to-video").
+Uses fal_client.submit_async() with manual polling (via fal_polling helper)
+to avoid the default 100ms polling interval that floods logs.
 Includes last-frame extraction via ffmpeg subprocess (run in thread to avoid blocking).
 
 Resolution: 480p (854×480) per FR-029 — lowest cost while maintaining acceptable quality.
@@ -16,6 +17,7 @@ from pathlib import Path
 import httpx
 
 from backend.config import settings
+from backend.services.fal_polling import submit_and_poll
 
 try:
     import fal_client
@@ -23,6 +25,9 @@ except ImportError:
     fal_client = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
+
+# Timeout (seconds) for fal.ai video generation. Covers queue wait + processing.
+VIDEO_GEN_TIMEOUT = 600  # 10 minutes (video gen is slower than image gen)
 
 
 def _ffmpeg_exe() -> str:
@@ -67,6 +72,9 @@ async def generate_video_clip(
 
     Returns:
         Path to the saved video clip.
+
+    Raises:
+        RuntimeError: If the fal.ai request times out or fails.
     """
     # FR-010: Include style directive in every clip prompt for consistency
     style_directive = (
@@ -81,7 +89,7 @@ async def generate_video_clip(
     image_url = await fal_client.upload_file_async(image_path)
     logger.info("Image uploaded: %s", image_url)
 
-    result = await fal_client.subscribe_async(
+    result = await submit_and_poll(
         settings.fal_video_model,
         arguments={
             "prompt": styled_prompt,
@@ -92,9 +100,12 @@ async def generate_video_clip(
             "height": DEFAULT_VIDEO_HEIGHT,  # FR-029: 480p for minimum cost
             "audio": False,  # FR-022: disable audio to minimize per-clip cost
         },
+        timeout=VIDEO_GEN_TIMEOUT,
+        label="video",
     )
 
     video_url = result["video"]["url"]
+    logger.info("Video clip ready, downloading from %s", video_url)
     return await download_file(video_url, output_path)
 
 

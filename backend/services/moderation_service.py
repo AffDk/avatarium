@@ -252,12 +252,26 @@ def parse_gemini_response(
                 f"Segment {seg.get('sequence_number', '?')} 'persons' must be "
                 f"a list, got {type(persons).__name__}"
             )
+
+        # Coerce entries: Gemini sometimes returns dicts like {"name": "alice"}
+        # instead of plain strings. Extract the name and continue.
+        coerced: list[str] = []
         for entry in persons:
-            if not isinstance(entry, str):
-                raise ValueError(
-                    f"Segment {seg.get('sequence_number', '?')} 'persons' "
-                    f"entries must be strings, got {type(entry).__name__}"
-                )
+            if isinstance(entry, str):
+                coerced.append(entry)
+            elif isinstance(entry, dict):
+                # Try common key names Gemini might use
+                name = entry.get("name") or entry.get("person") or entry.get("character")
+                if isinstance(name, str):
+                    coerced.append(name)
+                else:
+                    # Last resort: take the first string value from the dict
+                    for v in entry.values():
+                        if isinstance(v, str):
+                            coerced.append(v)
+                            break
+            # Silently skip other non-string types
+        persons = coerced
 
         # FR-010: normalize to lowercase
         persons = [p.lower() for p in persons]

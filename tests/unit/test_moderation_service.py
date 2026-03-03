@@ -367,7 +367,7 @@ class TestParseGeminiResponsePersonValidation:
             parse_gemini_response(raw, person_names=["alice"])
 
     def test_parse_validates_persons_non_string_entries_raises(self) -> None:
-        """Persons with non-string entries raises ValueError."""
+        """Persons with non-string entries are silently skipped (coerced where possible)."""
         raw = json.dumps({
             "approved": True,
             "rejection_reason": None,
@@ -376,8 +376,26 @@ class TestParseGeminiResponsePersonValidation:
                 {"sequence_number": 1, "description": "Scene.", "persons": [123]},
             ],
         })
-        with pytest.raises(ValueError, match="persons"):
-            parse_gemini_response(raw, person_names=["alice"])
+        result = parse_gemini_response(raw, person_names=["alice"])
+        # Non-coercible entries (like plain ints) are silently dropped
+        assert result["segments"][0]["persons"] == []
+
+    def test_persons_dict_entries_coerced(self) -> None:
+        """Dict entries in persons are coerced to strings via 'name' key."""
+        raw = json.dumps({
+            "approved": True,
+            "rejection_reason": None,
+            "characters": {"alice": "tall woman", "bob": "short man"},
+            "segments": [
+                {
+                    "sequence_number": 1,
+                    "description": "Scene.",
+                    "persons": [{"name": "alice"}, {"name": "Bob"}],
+                },
+            ],
+        })
+        result = parse_gemini_response(raw, person_names=["alice", "bob"])
+        assert result["segments"][0]["persons"] == ["alice", "bob"]
 
     # ── T014: Person names normalized to lowercase (FR-010) ─────────────
     def test_persons_normalized_to_lowercase(self) -> None:

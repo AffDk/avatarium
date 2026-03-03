@@ -48,3 +48,16 @@ def setup_logging() -> None:
     root.addHandler(console_handler)
 
     root.info("Logging initialised — session log: %s", log_file)
+
+    # ── Suppress noisy third-party loggers ──────────────────────────────
+    # httpcore/httpx emit DEBUG lines for every poll request (~10/sec) which
+    # floods the log when fal.ai queues are long.  Keep them at WARNING.
+    for noisy in (
+        "httpcore",
+        "httpcore.http11",
+        "httpcore.connection",
+        "httpx",
+        "aiosqlite",
+        "sqlalchemy.engine.Engine",
+    ):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
