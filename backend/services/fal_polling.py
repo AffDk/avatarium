@@ -46,7 +46,7 @@ async def submit_and_poll(
     Raises:
         RuntimeError: On timeout or fal.ai error.
     """
-    logger.info("[%s] Submitting request to %s (timeout=%ds)...", label, application, timeout)
+    logger.info("[%s] Submitting to %s (timeout=%ds)", label, application, timeout)
 
     try:
         handle = await fal_client.submit_async(
@@ -93,11 +93,16 @@ async def submit_and_poll(
 
         status_name = type(status).__name__
 
-        # Log only on status change
+        # Log on status change with human-friendly descriptions
         if status_name != last_status_name:
+            phase = {
+                "Queued": "waiting in fal.ai queue",
+                "InProgress": "rendering on GPU",
+                "Completed": "done",
+            }.get(status_name, status_name)
             logger.info(
-                "[%s] Queue status: %s (%.0fs elapsed, request_id=%s)",
-                label, status_name, time.monotonic() - start, request_id,
+                "[%s] %s (%.0fs elapsed)",
+                label, phase, time.monotonic() - start,
             )
             last_status_name = status_name
 
@@ -112,7 +117,7 @@ async def submit_and_poll(
             interval = min(interval * BACKOFF_FACTOR, MAX_POLL_INTERVAL)
 
     # ── Fetch the completed result ──────────────────────────────────────
-    logger.info("[%s] Completed — fetching result (request_id=%s)...", label, request_id)
+    logger.info("[%s] Completed — downloading result...", label)
     try:
         result = await handle.get()
     except Exception as exc:
@@ -120,5 +125,5 @@ async def submit_and_poll(
         raise RuntimeError(f"{label} result retrieval failed: {exc}") from exc
 
     elapsed = time.monotonic() - start
-    logger.info("[%s] Result fetched in %.1fs total", label, elapsed)
+    logger.info("[%s] Finished in %.1fs", label, elapsed)
     return result

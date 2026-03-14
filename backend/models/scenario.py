@@ -10,6 +10,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Integer,
+    JSON,
     String,
     Text,
     UniqueConstraint,
@@ -108,6 +109,12 @@ class Segment(Base):
     description: Mapped[str] = mapped_column(
         Text,
         nullable=False,
+    )
+    persons: Mapped[list[str]] = mapped_column(
+        JSON,
+        nullable=False,
+        default=list,
+        doc="Person names appearing in this segment (lowercase).",
     )
     estimated_duration: Mapped[float] = mapped_column(
         Float,

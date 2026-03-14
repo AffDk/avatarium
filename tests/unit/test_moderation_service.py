@@ -17,6 +17,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from backend.services.moderation_service import (
+    _enforce_character_descriptions_in_segments,
+    _inject_description_after_name,
+    _segment_already_has_char_description,
     moderate_and_split,
     parse_gemini_response,
 )
@@ -492,3 +495,224 @@ class TestParseGeminiResponsePersonValidation:
         assert "violence" in result["rejection_reason"].lower()
         assert result["characters"] == {}
         assert result["segments"] == []
+
+
+class TestSegmentAlreadyHasCharDescription:
+    """Tests for _segment_already_has_char_description helper."""
+
+    def test_verbatim_match(self) -> None:
+        desc = "alice, a tall woman with dark hair as seen in the reference photo, walks"
+        char_desc = "tall woman with dark hair as seen in the reference photo"
+        assert _segment_already_has_char_description(desc, "alice", char_desc) is True
+
+    def test_no_description_at_all(self) -> None:
+        desc = "alice walks into the park and sits down"
+        char_desc = "tall woman with dark hair as seen in the reference photo"
+        assert _segment_already_has_char_description(desc, "alice", char_desc) is False
+
+    def test_very_long_description_still_detected(self) -> None:
+        """Regression test: long descriptions (350+ chars) must be detected."""
+        long_desc = (
+            "young adult woman with long, straight, dark brown hair parted on "
+            "the side with a white orchid clip on the right, light-medium skin "
+            "tone, dark brown eyes with dark eye makeup, red lipstick, wearing "
+            "a light-colored sleeveless top, a delicate silver necklace, and "
+            "long silver dangle earrings as seen in the reference photo"
+        )
+        segment_text = f"person1, a {long_desc}, walks left to right through a terminal."
+        assert _segment_already_has_char_description(
+            segment_text.lower(), "person1", long_desc.lower()
+        ) is True
+
+    def test_photo_ref_phrase_present_counts(self) -> None:
+        """If 'as seen in the reference photo' is present with the name, that's enough."""
+        desc = (
+            "alice, a tall brunette with curly hair "
+            "as seen in the reference photo, waves to bob."
+        )
+        # char_desc doesn't match verbatim but the phrase is there
+        char_desc = "tall woman with dark hair as seen in the reference photo"
+        assert _segment_already_has_char_description(desc, "alice", char_desc) is True
+
+    def test_key_traits_match(self) -> None:
+        """If 60%+ of key traits appear even without the exact phrase."""
+        char_desc = "tall woman with dark hair, wearing red jacket, light skin"
+        desc = "alice, a tall woman with dark hair, light skin, strolls through the park"
+        assert _segment_already_has_char_description(desc, "alice", char_desc) is True
+
+    def test_insufficient_traits_no_match(self) -> None:
+        """If less than 60% of traits match, should return False."""
+        char_desc = "tall woman with dark hair, wearing red jacket, light skin, blue eyes"
+        desc = "alice, with blue eyes, walks through the park"
+        assert _segment_already_has_char_description(desc, "alice", char_desc) is False
+
+    def test_name_not_present(self) -> None:
+        desc = "bob walks into the park as seen in the reference photo"
+        char_desc = "tall woman with dark hair as seen in the reference photo"
+        assert _segment_already_has_char_description(desc, "alice", char_desc) is False
+
+
+class TestInjectDescriptionAfterName:
+    """Tests for _inject_description_after_name helper."""
+
+    def test_basic_injection(self) -> None:
+        result = _inject_description_after_name(
+            "Alice walks into the park.",
+            "alice",
+            "tall brunette as seen in the reference photo",
+        )
+        assert result == (
+            "Alice (tall brunette as seen in the reference photo) walks into the park."
+        )
+
+    def test_case_insensitive_match(self) -> None:
+        result = _inject_description_after_name(
+            "ALICE walks.", "alice", "desc as seen in the reference photo"
+        )
+        assert "(desc as seen in the reference photo)" in result
+
+    def test_name_not_found_returns_unchanged(self) -> None:
+        original = "Bob walks into the park."
+        result = _inject_description_after_name(original, "alice", "desc")
+        assert result == original
+
+
+class TestEnforceCharacterDescriptions:
+    """Tests for _enforce_character_descriptions_in_segments."""
+
+    def test_no_characters_noop(self) -> None:
+        result = {
+            "characters": {},
+            "segments": [
+                {"sequence_number": 1, "description": "A park scene.", "persons": []},
+            ],
+        }
+        _enforce_character_descriptions_in_segments(result)
+        assert result["segments"][0]["description"] == "A park scene."
+
+    def test_already_has_photo_ref_untouched(self) -> None:
+        result = {
+            "characters": {
+                "alice": "tall woman with dark hair as seen in the reference photo"
+            },
+            "segments": [
+                {
+                    "sequence_number": 1,
+                    "description": (
+                        "Alice, a tall woman with dark hair "
+                        "as seen in the reference photo, walks in the park."
+                    ),
+                    "persons": ["alice"],
+                },
+            ],
+        }
+        original_desc = result["segments"][0]["description"]
+        _enforce_character_descriptions_in_segments(result)
+        assert result["segments"][0]["description"] == original_desc
+
+    def test_missing_photo_ref_gets_injected(self) -> None:
+        result = {
+            "characters": {
+                "alice": "tall woman with dark hair as seen in the reference photo"
+            },
+            "segments": [
+                {
+                    "sequence_number": 1,
+                    "description": "Alice walks into the park.",
+                    "persons": ["alice"],
+                },
+            ],
+        }
+        _enforce_character_descriptions_in_segments(result)
+        desc = result["segments"][0]["description"]
+        assert "as seen in the reference photo" in desc
+        assert "tall woman with dark hair" in desc
+
+    def test_char_desc_missing_photo_phrase_gets_appended(self) -> None:
+        """If the characters manifest itself lacks 'as seen in the reference
+        photo', the enforcement function should still append it."""
+        result = {
+            "characters": {"bob": "stocky man with glasses"},
+            "segments": [
+                {
+                    "sequence_number": 1,
+                    "description": "Bob walks down the street.",
+                    "persons": ["bob"],
+                },
+            ],
+        }
+        _enforce_character_descriptions_in_segments(result)
+        desc = result["segments"][0]["description"]
+        assert "stocky man with glasses" in desc
+        assert "as seen in the reference photo" in desc
+
+    def test_multiple_persons_both_injected(self) -> None:
+        result = {
+            "characters": {
+                "alice": "tall brunette as seen in the reference photo",
+                "bob": "stocky blond as seen in the reference photo",
+            },
+            "segments": [
+                {
+                    "sequence_number": 1,
+                    "description": "Alice waves to Bob in the park.",
+                    "persons": ["alice", "bob"],
+                },
+            ],
+        }
+        _enforce_character_descriptions_in_segments(result)
+        desc = result["segments"][0]["description"]
+        assert "tall brunette as seen in the reference photo" in desc
+        assert "stocky blond as seen in the reference photo" in desc
+
+    def test_integration_via_parse_gemini_response(self) -> None:
+        """parse_gemini_response should invoke enforcement automatically."""
+        raw = json.dumps({
+            "approved": True,
+            "rejection_reason": None,
+            "characters": {
+                "alice": "short woman with red hair as seen in the reference photo",
+            },
+            "segments": [
+                {
+                    "sequence_number": 1,
+                    "description": "Alice walks alone in the forest.",
+                    "persons": ["alice"],
+                },
+            ],
+        })
+        result = parse_gemini_response(raw, person_names=["alice"])
+        desc = result["segments"][0]["description"]
+        assert "as seen in the reference photo" in desc
+        assert "short woman with red hair" in desc
+
+    def test_no_duplicate_when_gemini_already_included_long_description(self) -> None:
+        """Regression: when Gemini includes a very long character description
+        with 'as seen in the reference photo', the enforcer must NOT inject
+        a duplicate parenthetical description."""
+        long_char_desc = (
+            "young adult woman with long, straight, dark brown hair parted on "
+            "the side with a white orchid clip on the right, light-medium skin "
+            "tone, dark brown eyes with dark eye makeup, red lipstick, wearing "
+            "a light-colored (possibly white lace) sleeveless top or dress, "
+            "a delicate silver necklace, and long silver dangle earrings "
+            "as seen in the reference photo"
+        )
+        segment_desc = (
+            f"person1, a {long_char_desc}, walks left to right through "
+            "a bustling airport terminal in Tehran, scanning the area."
+        )
+        result = {
+            "characters": {"person1": long_char_desc},
+            "segments": [
+                {
+                    "sequence_number": 1,
+                    "description": segment_desc,
+                    "persons": ["person1"],
+                },
+            ],
+        }
+        _enforce_character_descriptions_in_segments(result)
+        final_desc = result["segments"][0]["description"]
+        # Must remain unchanged — no duplicate parenthetical injection
+        assert final_desc == segment_desc

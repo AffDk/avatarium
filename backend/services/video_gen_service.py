@@ -1,22 +1,15 @@
-"""Video generation service using fal.ai LTX Video 13B Distilled.
+"""Video generation service — fal.ai LTX Video image-to-video + ffmpeg frame extraction.
 
-Uses fal_client.submit_async() with manual polling (via fal_polling helper)
-to avoid the default 100ms polling interval that floods logs.
-Includes last-frame extraction via ffmpeg subprocess (run in thread to avoid blocking).
-
-Resolution: 480p (854×480) per FR-029 — lowest cost while maintaining acceptable quality.
-Audio: Disabled by default per FR-022 — minimizes per-clip cost.
+Resolution: 480p (854x480) per FR-029. Audio disabled per FR-022.
 """
 
 import asyncio
 import logging
-import shutil
 import subprocess
 from pathlib import Path
 
-import httpx
-
 from backend.config import settings
+from backend.services._utils import download_file, ffmpeg_exe
 from backend.services.fal_polling import submit_and_poll
 
 try:
@@ -26,34 +19,15 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-# Timeout (seconds) for fal.ai video generation. Covers queue wait + processing.
-VIDEO_GEN_TIMEOUT = 600  # 10 minutes (video gen is slower than image gen)
-
-
-def _ffmpeg_exe() -> str:
-    """Resolve ffmpeg path: system PATH first, then imageio_ffmpeg bundle."""
-    found = shutil.which("ffmpeg")
-    if found:
-        return found
-    try:
-        import imageio_ffmpeg
-        return imageio_ffmpeg.get_ffmpeg_exe()
-    except ImportError:
-        return "ffmpeg"  # fall back; will fail with a clear error
-
-# FR-029: Default to 480p resolution for minimum cost
+VIDEO_GEN_TIMEOUT = 600  # 10 min
 DEFAULT_VIDEO_WIDTH = 854
 DEFAULT_VIDEO_HEIGHT = 480
 
 
-async def download_file(url: str, dest_path: str) -> str:
-    """Download a file from URL to local path."""
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(url)
-        resp.raise_for_status()
-        Path(dest_path).parent.mkdir(parents=True, exist_ok=True)
-        Path(dest_path).write_bytes(resp.content)
-    return dest_path
+def _style_directive(style: str) -> str:
+    if style == "animation":
+        return "cartoon, stylized animation style"
+    return "realistic, cinematic movie style"
 
 
 async def generate_video_clip(
@@ -61,77 +35,56 @@ async def generate_video_clip(
     prompt: str,
     output_path: str,
     style: str = "animation",
+    has_person_refs: bool = False,
 ) -> str:
-    """Generate a ~5-second video clip from an input image using fal.ai LTX Video.
+    """Generate a ~5-second video clip from *image_path* via fal.ai LTX Video.
 
-    Args:
-        image_path: Path to the input image (first frame or last frame of previous clip).
-        prompt: Scene description for this segment.
-        output_path: Where to save the generated video clip.
-        style: Video style — "animation" or "movie_like".
+    When *has_person_refs* is True, the input image is a composite containing
+    the last frame at the top and person reference photos at the bottom.
+    The prompt is augmented to instruct the model to use the top portion as
+    the scene continuation and incorporate the referenced characters.
 
-    Returns:
-        Path to the saved video clip.
-
-    Raises:
-        RuntimeError: If the fal.ai request times out or fails.
+    Returns the local path of the saved clip.
     """
-    # FR-010: Include style directive in every clip prompt for consistency
-    style_directive = (
-        "cartoon, stylized animation style"
-        if style == "animation"
-        else "realistic, cinematic movie style"
-    )
-    styled_prompt = f"{prompt}, {style_directive}"
+    styled_prompt = f"{prompt}, {_style_directive(style)}"
+    if has_person_refs:
+        styled_prompt = (
+            "Continue the scene shown in the top portion of the reference image. "
+            "The characters shown in the bottom strip are the people in this scene — "
+            "use their appearance as reference. " + styled_prompt
+        )
 
-    # Upload local image to fal.ai storage first — the API needs an HTTP URL
-    logger.info("Uploading image %s to fal.ai storage...", image_path)
+    logger.info("Uploading input image to fal.ai storage...")
     image_url = await fal_client.upload_file_async(image_path)
-    logger.info("Image uploaded: %s", image_url)
+    logger.info("Input image uploaded — submitting video generation to fal.ai queue...")
 
     result = await submit_and_poll(
         settings.fal_video_model,
         arguments={
             "prompt": styled_prompt,
             "image_url": image_url,
-            "num_frames": 121,  # ~5 seconds at 24fps
+            "num_frames": 121,
             "fps": 24,
-            "width": DEFAULT_VIDEO_WIDTH,   # FR-029: 480p for minimum cost
-            "height": DEFAULT_VIDEO_HEIGHT,  # FR-029: 480p for minimum cost
-            "audio": False,  # FR-022: disable audio to minimize per-clip cost
+            "width": DEFAULT_VIDEO_WIDTH,
+            "height": DEFAULT_VIDEO_HEIGHT,
+            "audio": False,
         },
         timeout=VIDEO_GEN_TIMEOUT,
         label="video",
     )
 
     video_url = result["video"]["url"]
-    logger.info("Video clip ready, downloading from %s", video_url)
+    logger.info("Video clip ready: %s", video_url)
     return await download_file(video_url, output_path)
 
 
-async def extract_last_frame(
-    video_path: str,
-    output_path: str,
-) -> str:
-    """Extract the last frame from a video clip using ffmpeg.
-
-    Uses: ffmpeg -sseof -0.1 -i clip.mp4 -vframes 1 -y last_frame.jpg
-
-    Args:
-        video_path: Path to the video clip.
-        output_path: Where to save the extracted frame.
-
-    Returns:
-        Path to the extracted frame image.
-    """
+async def extract_last_frame(video_path: str, output_path: str) -> str:
+    """Extract the last frame from *video_path* using ffmpeg. Returns *output_path*."""
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-
-    # Run ffmpeg in a thread to avoid blocking the async event loop
-    ffmpeg = _ffmpeg_exe()
     await asyncio.to_thread(
         subprocess.run,
         [
-            ffmpeg,
+            ffmpeg_exe(),
             "-sseof", "-0.1",
             "-i", video_path,
             "-vframes", "1",
@@ -141,5 +94,4 @@ async def extract_last_frame(
         check=True,
         capture_output=True,
     )
-
     return output_path

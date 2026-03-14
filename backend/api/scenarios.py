@@ -93,6 +93,7 @@ async def submit_scenario(
                 scenario_id=scenario.id,
                 sequence_number=seg_data["sequence_number"],
                 description=seg_data["description"],
+                persons=seg_data.get("persons", []),
             )
             db.add(segment)
             segments.append(segment)

@@ -12,9 +12,11 @@ logger = logging.getLogger(__name__)
 
 _is_sqlite = settings.database_url.startswith("sqlite")
 
-# Engine kwargs
+# Engine kwargs — echo is OFF; SQL logging is handled by the logging
+# framework (sqlalchemy.engine logger) at DEBUG level so it only
+# appears in the session log file, not in the console.
 _engine_kwargs: dict = {
-    "echo": settings.is_development,
+    "echo": False,
     "future": True,
 }
 if _is_sqlite:

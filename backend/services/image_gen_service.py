@@ -1,32 +1,46 @@
-"""Image generation service using fal.ai text-to-image model.
+"""Image generation service — fal.ai text-to-image / image-to-image.
 
-Uses fal_client.submit_async() with manual polling (via fal_polling helper)
-to avoid the default 100ms polling interval that floods logs.
+When reference photos are provided (uploaded person photos), they are
+uploaded to fal.ai and passed as image references so the generated
+image incorporates the actual people from the project.
 """
 
 import logging
 import os
-from pathlib import Path
-
-import httpx
 
 from backend.config import settings
+from backend.services._utils import download_file
 from backend.services.fal_polling import submit_and_poll
+
+try:
+    import fal_client
+except ImportError:
+    fal_client = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
 
-# Timeout (seconds) for fal.ai image generation. Covers queue wait + processing.
-IMAGE_GEN_TIMEOUT = 300  # 5 minutes
+IMAGE_GEN_TIMEOUT = 300  # 5 min
+
+_MAX_REF_PHOTOS = 3
 
 
-async def download_file(url: str, dest_path: str) -> str:
-    """Download a file from URL to local path."""
-    async with httpx.AsyncClient(timeout=120) as client:
-        resp = await client.get(url)
-        resp.raise_for_status()
-        Path(dest_path).parent.mkdir(parents=True, exist_ok=True)
-        Path(dest_path).write_bytes(resp.content)
-    return dest_path
+async def _upload_reference_photos(photo_paths: list[str]) -> list[str]:
+    """Upload up to *_MAX_REF_PHOTOS* local photos to fal.ai storage."""
+    urls: list[str] = []
+    for path in photo_paths[:_MAX_REF_PHOTOS]:
+        try:
+            url = await fal_client.upload_file_async(path)
+            urls.append(url)
+            logger.info("Uploaded reference photo %s → %s", path, url)
+        except Exception as exc:
+            logger.warning("Failed to upload reference photo %s: %s", path, exc)
+    return urls
+
+
+def _style_directive(style: str) -> str:
+    if style == "animation":
+        return "cartoon, stylized animation style"
+    return "realistic, cinematic movie style"
 
 
 async def generate_initial_image(
@@ -34,38 +48,32 @@ async def generate_initial_image(
     output_dir: str,
     style: str = "animation",
     filename: str = "initial_image.jpg",
+    reference_image_paths: list[str] | None = None,
 ) -> str:
-    """Generate the initial reference image using fal.ai Qwen Image.
+    """Generate the initial reference image via fal.ai.
 
-    Args:
-        prompt: Scene description for image generation.
-        output_dir: Directory to save the generated image.
-        style: Video style directive — "animation" or "movie_like" (FR-010).
-        filename: Output filename.
-
-    Returns:
-        Path to the saved image file.
-
-    Raises:
-        RuntimeError: If the fal.ai request times out or fails.
+    Returns the local path of the saved image.
     """
-    # FR-010: Include style directive in the prompt
-    style_directive = (
-        "cartoon, stylized animation style"
-        if style == "animation"
-        else "realistic, cinematic movie style"
-    )
-    full_prompt = f"{prompt}, {style_directive}"
-    logger.debug("Image prompt: %.200s", full_prompt)
+    full_prompt = f"{prompt}, {_style_directive(style)}"
+    arguments: dict = {"prompt": full_prompt, "image_size": "landscape_16_9"}
+
+    if reference_image_paths:
+        logger.info("Uploading %d reference photo(s) to fal.ai storage...",
+                    len(reference_image_paths[:_MAX_REF_PHOTOS]))
+        ref_urls = await _upload_reference_photos(reference_image_paths)
+        if ref_urls:
+            arguments["image_url"] = ref_urls[0]
+            if len(ref_urls) > 1:
+                arguments["image_urls"] = ref_urls
+            logger.info("Reference photos uploaded — submitting image generation request")
 
     result = await submit_and_poll(
         settings.fal_image_model,
-        arguments={"prompt": full_prompt, "image_size": "landscape_16_9"},
+        arguments=arguments,
         timeout=IMAGE_GEN_TIMEOUT,
         label="image",
     )
 
     image_url = result["images"][0]["url"]
-    logger.info("Image ready, downloading from %s", image_url)
-    output_path = os.path.join(output_dir, filename)
-    return await download_file(image_url, output_path)
+    logger.info("Image ready: %s", image_url)
+    return await download_file(image_url, os.path.join(output_dir, filename))

@@ -302,6 +302,20 @@
                 document.getElementById('scenario-form').style.display = 'block';
             }
 
+            // Restore scenario text preserved across photo-upload reload
+            const savedScenario = sessionStorage.getItem('avatarium_scenario_' + projectId);
+            if (savedScenario) {
+                const scenarioEl = document.getElementById('scenario');
+                const scenarioForm = document.getElementById('scenario-form');
+                if (scenarioEl && (!scenarioEl.value || !scenarioEl.value.trim())) {
+                    scenarioEl.value = savedScenario;
+                    if (scenarioForm) scenarioForm.style.display = 'block';
+                    const cc = document.getElementById('char-count');
+                    if (cc) cc.textContent = `${savedScenario.length} / 10000`;
+                }
+                sessionStorage.removeItem('avatarium_scenario_' + projectId);
+            }
+
         } catch (e) {
             console.error('Page load error:', e);
             window.location.href = '/dashboard';
@@ -547,6 +561,11 @@
                     // Show scenario form
                     const scenarioForm = document.getElementById('scenario-form');
                     if (scenarioForm) scenarioForm.style.display = 'block';
+                    // Preserve scenario text across reload
+                    const scenarioEl = document.getElementById('scenario');
+                    if (scenarioEl && scenarioEl.value.trim()) {
+                        sessionStorage.setItem('avatarium_scenario_' + projectId, scenarioEl.value);
+                    }
                     // Reload to refresh existing photos
                     setTimeout(() => window.location.reload(), 1200);
                 } else {

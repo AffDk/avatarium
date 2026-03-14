@@ -18,6 +18,7 @@ class SegmentResponse(BaseModel):
     id: uuid.UUID
     sequence_number: int
     description: str
+    persons: list[str] = []
     estimated_duration: float
     generation_status: str
 
