@@ -1,6 +1,6 @@
 """Video generation service — fal.ai LTX Video image-to-video + ffmpeg frame extraction.
 
-Resolution: 480p (854x480) per FR-029. Audio disabled per FR-022.
+Resolution: 768x512 (LTX Video native landscape). Audio disabled per FR-022.
 """
 
 import asyncio
@@ -20,14 +20,15 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 VIDEO_GEN_TIMEOUT = 600  # 10 min
-DEFAULT_VIDEO_WIDTH = 854
-DEFAULT_VIDEO_HEIGHT = 480
+# LTX Video native resolutions — use 768x512 for landscape
+DEFAULT_VIDEO_WIDTH = 768
+DEFAULT_VIDEO_HEIGHT = 512
 
 
 def _style_directive(style: str) -> str:
     if style == "animation":
-        return "cartoon, stylized animation style"
-    return "realistic, cinematic movie style"
+        return "cartoon animation style"
+    return "cinematic movie style, photorealistic"
 
 
 async def generate_video_clip(
@@ -35,28 +36,45 @@ async def generate_video_clip(
     prompt: str,
     output_path: str,
     style: str = "animation",
-    has_person_refs: bool = False,
 ) -> str:
     """Generate a ~5-second video clip from *image_path* via fal.ai LTX Video.
 
-    When *has_person_refs* is True, the input image is a composite containing
-    the last frame at the top and person reference photos at the bottom.
-    The prompt is augmented to instruct the model to use the top portion as
-    the scene continuation and incorporate the referenced characters.
+    The input image is used as the starting frame.  Character continuity
+    relies on last-frame chaining and descriptive text prompts — no
+    composite images are used.
 
     Returns the local path of the saved clip.
     """
-    styled_prompt = f"{prompt}, {_style_directive(style)}"
-    if has_person_refs:
-        styled_prompt = (
-            "Continue the scene shown in the top portion of the reference image. "
-            "The characters shown in the bottom strip are the people in this scene — "
-            "use their appearance as reference. " + styled_prompt
-        )
+    style_dir = _style_directive(style)
+    styled_prompt = (
+        f"{style_dir}. "
+        "IMPORTANT: The input image is the GROUND TRUTH for character "
+        "appearance — it was generated from real reference photos. "
+        "Preserve every character's face, identity, skin tone, hair, "
+        "clothing, and body proportions EXACTLY as shown in the input "
+        "image throughout the entire video. Do NOT alter, distort, or "
+        "reimagine any person's appearance during the animation. "
+        f"{prompt}"
+    )
 
-    logger.info("Uploading input image to fal.ai storage...")
+    logger.info(
+        "[VideoGen] ─── fal.ai image-to-video ───\n"
+        "  model: %s\n"
+        "  input image: %s\n"
+        "  prompt: %s\n"
+        "  resolution: %dx%d\n"
+        "  frames: 121 @ 24fps (~5s)\n"
+        "  output: %s",
+        settings.fal_video_model,
+        image_path,
+        styled_prompt,
+        DEFAULT_VIDEO_WIDTH,
+        DEFAULT_VIDEO_HEIGHT,
+        output_path,
+    )
+    logger.info("[VideoGen] Uploading input image to fal.ai storage...")
     image_url = await fal_client.upload_file_async(image_path)
-    logger.info("Input image uploaded — submitting video generation to fal.ai queue...")
+    logger.info("[VideoGen] Input image uploaded — submitting to fal.ai queue...")
 
     result = await submit_and_poll(
         settings.fal_video_model,
@@ -74,7 +92,7 @@ async def generate_video_clip(
     )
 
     video_url = result["video"]["url"]
-    logger.info("Video clip ready: %s", video_url)
+    logger.info("[VideoGen] Video clip ready: %s", video_url)
     return await download_file(video_url, output_path)
 
 

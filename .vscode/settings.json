@@ -8,7 +8,12 @@
     },
     "chat.tools.terminal.autoApprove": {
         ".specify/scripts/bash/": true,
-        ".specify/scripts/powershell/": true
-    }
+        ".specify/scripts/powershell/": true,
+        "/^python -m pytest tests/ -x -q --tb=short 2>&1 \\| Select-Object -First 40$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    },
+    "specstory.cloudSync.enabled": "never"
 }
 

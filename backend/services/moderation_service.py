@@ -41,6 +41,7 @@ SPLITTING RULES:
 - Each segment must be a complete, coherent scene description
 - Maintain narrative flow between segments
 - Include visual details suitable for image-to-video generation
+- IMPORTANT: Each segment description will be used as a TEXT PROMPT for an AI video generation model that is also given the character reference photos as input images. The model will try to generate characters that match the reference photos, but it relies on the text prompt to reinforce which characters to show and what they look like. Therefore you MUST describe each character's appearance from their reference photos in EVERY segment — this is how the video model knows which person in the reference photos corresponds to which character in the scene.
 
 MOVEMENT DIRECTION & CONTINUITY RULES:
 - For each segment, explicitly state the direction of movement of every character (e.g., "walking left to right", "moving toward the camera", "turning from left to right").
@@ -59,6 +60,23 @@ PHYSICAL REALISM & SPATIAL CONSISTENCY RULES:
 - If two characters interact physically (handshake, hug, passing an object), describe the reach and contact clearly so the generation model places them at a plausible distance.
 - Avoid describing actions that defy gravity or basic physics unless the scenario is explicitly fantastical — and even then, describe the supernatural element clearly (e.g., "magically floats upward").
 
+DETAILED SCENE DESCRIPTION & SPATIAL CONTINUITY RULES:
+Each segment description MUST include ALL of the following elements to ensure the video generation model produces realistic, consistent output:
+
+1. ENVIRONMENT DESCRIPTION: Name and describe the specific location (e.g., "a sunlit suburban kitchen with white tile flooring, oak cabinets, and a window above the sink"). The environment MUST remain consistent across consecutive segments set in the same location — do NOT change the room layout, furniture, or architectural features unless the character moves to a new space.
+
+2. CAMERA ANGLE: Specify the camera perspective for each segment (e.g., "medium shot from waist up", "wide establishing shot", "close-up on face", "over-the-shoulder shot"). Camera angles should transition logically between segments — avoid jarring jumps from extreme close-up to wide shot without motivation.
+
+3. LIGHTING: Describe the lighting conditions (e.g., "warm afternoon sunlight streaming through the window", "dim overhead fluorescent light", "soft golden-hour backlight"). Lighting MUST stay consistent across segments set in the same time and place unless there is a narrative reason for change (e.g., someone turns off a light, the sun sets).
+
+4. CHARACTER POSITIONS: Describe WHERE each character is within the environment relative to landmarks and other characters (e.g., "Alice stands behind the kitchen counter, facing Bob who sits on the stool across from her"). Do NOT use abstract frame positions like "on the left side" or "center frame" — use environmental references instead.
+
+5. PROP AND OBJECT CONTINUITY: If a character is holding or using an object (e.g., a coffee mug, a phone, a bag), that object MUST persist across segments until the character explicitly puts it down or hands it off. Do not have objects appear or disappear between segments.
+
+6. TRANSITION DESCRIPTION: The FIRST sentence of each segment (except segment 1) MUST describe how the scene connects to the previous segment. Examples: "Continuing from the same position at the kitchen counter, Alice...", "As Bob finishes speaking, the camera shifts to show Alice who is now standing near the doorway...". Never start a segment as if it's an independent scene.
+
+7. BACKGROUND ACTIVITY: Include subtle environmental details that ground the scene in reality — e.g., "leaves gently blowing in the background", "the clock on the wall shows 3:15", "traffic barely audible through the closed window". These details should remain consistent across segments.
+
 SCENARIO:
 {scenario_text}
 {characters_section}
@@ -67,8 +85,9 @@ RESPOND WITH VALID JSON ONLY (no extra text):
     "approved": true/false,
     "rejection_reason": null or "reason string",
     "characters": {{}},
+    "environment": "A one-paragraph description of the primary setting/location shared across segments (e.g., 'A cozy suburban kitchen with white tile floors, wooden cabinets, a window above the sink, and a small breakfast table with two stools.'). This anchors spatial consistency.",
     "segments": [
-        {{"sequence_number": 1, "description": "Scene description...", "persons": []}},
+        {{"sequence_number": 1, "description": "Full scene description including environment, camera angle, lighting, character positions, and action...", "persons": []}},
         ...
     ]
 }}
@@ -82,22 +101,21 @@ _CHARACTERS_SECTION_WITH_PHOTOS = """
 CHARACTERS (known persons from uploaded photos — reference photos are attached below):
 {person_names_csv}
 
-CRITICAL — CHARACTER APPEARANCE RULES (you MUST follow ALL of these in EVERY segment):
-- Reference photos for each character are attached to this message. Study them carefully.
-- Describe each character's ACTUAL visual appearance based on the attached reference photos — do NOT invent or guess traits.
-- Include accurate details: hair color, hair style, skin tone, approximate age, clothing, build, and any distinguishing features EXACTLY as seen in the photos.
+CRITICAL — CHARACTER IDENTIFICATION RULES:
+The video generation model that will process these segments receives the actual reference photos as input images. However, when multiple people appear in the reference photos, the model needs a BRIEF distinguishing description to know which person in the photo corresponds to which character name. Without this, the model may confuse characters (e.g., swapping a toddler for a woman).
 
-*** MANDATORY PHOTO REFERENCE IN EVERY SEGMENT ***
-- EVERY segment description that mentions a character MUST include the phrase "as seen in the reference photo" AND a visual description of that character.
-- This is NOT optional. A segment that mentions a character by name but omits their visual description or "as seen in the reference photo" is INVALID.
-- Do NOT write a segment like: "Alice walks into the park." — this is WRONG because it lacks the visual description and photo reference.
-- CORRECT: "Alice, a tall woman with straight dark brown hair in a red jacket as seen in the reference photo, walks into the park."
-- WRONG: "Alice walks into the park." (missing visual description and photo reference — NEVER do this)
-- WRONG: "Alice, the tall brunette, walks into the park." (missing "as seen in the reference photo" — NEVER do this)
-- Even if a character appeared in a previous segment, you MUST repeat their visual description with "as seen in the reference photo" in EVERY segment they appear in. The video generation model processes each segment independently and has no memory of previous segments.
-- Use EXACTLY the same visual description every time a character appears — do NOT paraphrase or add traits.
+Your job is to provide a SHORT identifying tag for each character — just enough to disambiguate them from each other in the reference photos.
+
+RULES:
+- In the "characters" JSON field, map each name to a BRIEF identifying description (3-6 words): e.g., "young toddler boy", "adult woman with red jacket", "tall man with glasses". Focus on the MOST distinguishing traits that separate this person from the other characters — such as age group, gender, and one standout visual feature.
+- In EVERY segment description, identify each character with their name followed by their brief tag and "reference photo" in parentheses — e.g., "Alice (adult woman, reference photo) walks into the park." or "Bob (toddler boy, reference photo) toddles behind her."
+- The tag MUST be short enough to disambiguate but NOT a full physical inventory. Do NOT list every detail like hair color, skin tone, eye shape, clothing, accessories, build, etc.
+- WRONG (too verbose): "Person1, a young adult woman with medium skin tone, long straight dark brown hair with a white orchid clip, dark eyebrows, red lipstick, wearing a white lace top and silver earrings as seen in the reference photo, walks through the terminal."
+- WRONG (too minimal — no disambiguation): "Person1 (reference photo) walks through the terminal."
+- CORRECT: "Person1 (young woman with dark hair, reference photo) walks purposefully from right to left through the brightly lit terminal, carrying a small bag over her shoulder."
+- Even if a character appeared in a previous segment, you MUST include their identifying tag and "reference photo" in EVERY segment. The video model processes each segment independently.
+- Focus your segment text on ACTION, MOVEMENT, ENVIRONMENT, CAMERA ANGLE, and LIGHTING — the brief tag handles identification, and the reference photo handles full appearance.
 - Describe spatial relationships between characters (e.g., "Alice stands facing Bob") — do NOT use frame positions like "left of frame".
-- The "characters" field in the JSON output MUST map each character name to their visual description derived from the reference photos.
 - Each segment's "persons" array MUST list only the character names who appear in that segment (lowercase).
 - Only use character names from the list above — do NOT invent new character names.
 
@@ -106,35 +124,33 @@ EXAMPLE OUTPUT (with characters):
     "approved": true,
     "rejection_reason": null,
     "characters": {{
-        "alice": "tall woman with straight dark brown hair, light skin, wearing a red jacket as seen in the reference photo",
-        "bob": "stocky man with short black hair, round glasses, wearing a blue denim jacket as seen in the reference photo"
+        "alice": "adult woman with red jacket",
+        "bob": "tall man with round glasses"
     }},
+    "environment": "A quiet public park on a sunny afternoon, with a gravel walking path flanked by tall oak trees, wooden benches on the left side, and a small pond visible in the background.",
     "segments": [
-        {{"sequence_number": 1, "description": "Alice, a tall woman with straight dark brown hair in a red jacket as seen in the reference photo, walks left to right into the park.", "persons": ["alice"]}},
-        {{"sequence_number": 2, "description": "Alice, a tall woman with straight dark brown hair in a red jacket as seen in the reference photo, continues walking left to right and waves to Bob, a stocky man with short black hair and round glasses in a blue denim jacket as seen in the reference photo, who approaches from the right.", "persons": ["alice", "bob"]}}
+        {{"sequence_number": 1, "description": "Wide establishing shot of a quiet public park on a sunny afternoon, warm golden-hour sunlight filtering through tall oak trees lining a gravel path. Alice (adult woman with red jacket, reference photo) walks left to right along the gravel path, passing a wooden bench on her left. Leaves drift gently in a light breeze.", "persons": ["alice"]}},
+        {{"sequence_number": 2, "description": "Continuing along the same gravel path from the previous shot, medium shot with warm afternoon sunlight. Alice (adult woman with red jacket, reference photo) continues walking left to right and raises her right hand to wave toward Bob (tall man with round glasses, reference photo), who stands near a wooden bench about ten meters ahead and turns to face her. The pond is visible in the background behind Bob.", "persons": ["alice", "bob"]}}
     ]
 }}
 
-NOTICE: In segment 2 above, Alice's full visual description with "as seen in the reference photo" is repeated even though she appeared in segment 1. This is REQUIRED for every segment.
+NOTICE how each character name is always followed by a short identifying tag + "reference photo" in parentheses. This helps the video model match each character name to the correct person in the reference photos.
 """
 
 _CHARACTERS_SECTION_NO_PHOTOS = """
 CHARACTERS (known persons from uploaded photos):
 {person_names_csv}
 
-CRITICAL — CHARACTER APPEARANCE RULES (you MUST follow ALL of these in EVERY segment):
-- Reference each character by their given name in every segment where they appear.
-- Provide a short, distinguishing visual description (2-3 traits: clothing, hair, build) for each character.
-- Use EXACTLY the same visual description every time a character appears — do NOT paraphrase or add traits.
+CRITICAL — CHARACTER IDENTIFICATION RULES:
+The video generation model that will process these segments receives the actual reference photos as input images. However, when multiple people appear, the model needs a BRIEF distinguishing description to know which person corresponds to which character name.
 
-*** MANDATORY PHOTO REFERENCE IN EVERY SEGMENT ***
-- EVERY segment description that mentions a character MUST include the phrase "as seen in the reference photo" AND a visual description of that character.
-- This is NOT optional. A segment that mentions a character by name but omits their visual description or "as seen in the reference photo" is INVALID.
-- Do NOT write a segment like: "Alice walks into the park." — this is WRONG because it lacks the visual description and photo reference.
-- CORRECT: "Alice, a tall woman with curly red hair in a green dress as seen in the reference photo, walks into the park."
-- Even if a character appeared in a previous segment, you MUST repeat their visual description with "as seen in the reference photo" in EVERY segment they appear in. The video generation model processes each segment independently and has no memory of previous segments.
-- Describe spatial relationships between characters (e.g., "Alice stands facing Bob") — do NOT use frame positions like "left of frame".
-- The "characters" field in the JSON output MUST map each character name to their visual description.
+RULES:
+- In the "characters" JSON field, map each name to a BRIEF identifying description (3-6 words): e.g., "adult woman with green dress", "tall man with round glasses".
+- In EVERY segment description, identify each character with their name followed by their brief tag and "reference photo" in parentheses — e.g., "Alice (adult woman, reference photo) walks into the park."
+- Keep the tag short — just enough to disambiguate characters from each other.
+- Focus segment text on ACTION, MOVEMENT, ENVIRONMENT, CAMERA ANGLE, and LIGHTING.
+- Even if a character appeared in a previous segment, you MUST include their identifying tag and "reference photo" in EVERY segment.
+- Describe spatial relationships between characters — do NOT use frame positions like "left of frame".
 - Each segment's "persons" array MUST list only the character names who appear in that segment (lowercase).
 - Only use character names from the list above — do NOT invent new character names.
 
@@ -143,16 +159,17 @@ EXAMPLE OUTPUT (with characters):
     "approved": true,
     "rejection_reason": null,
     "characters": {{
-        "alice": "tall woman with curly red hair and a green dress as seen in the reference photo",
-        "bob": "stocky man with round glasses and a blue denim jacket as seen in the reference photo"
+        "alice": "adult woman with green dress",
+        "bob": "tall man with round glasses"
     }},
+    "environment": "A quiet public park on a sunny afternoon, with a gravel walking path flanked by tall oak trees, wooden benches on the left side, and a small pond visible in the background.",
     "segments": [
-        {{"sequence_number": 1, "description": "Alice, a tall woman with curly red hair and a green dress as seen in the reference photo, walks left to right into the park.", "persons": ["alice"]}},
-        {{"sequence_number": 2, "description": "Alice, a tall woman with curly red hair in a green dress as seen in the reference photo, continues left to right and waves to Bob, a stocky man with round glasses and a blue denim jacket as seen in the reference photo, who approaches from the right.", "persons": ["alice", "bob"]}}
+        {{"sequence_number": 1, "description": "Wide establishing shot of a quiet public park on a sunny afternoon, warm golden-hour sunlight filtering through tall oak trees. Alice (adult woman with green dress, reference photo) walks left to right along the gravel path, passing a wooden bench on her left.", "persons": ["alice"]}},
+        {{"sequence_number": 2, "description": "Continuing along the same gravel path from the previous shot, medium shot with warm afternoon sunlight. Alice (adult woman with green dress, reference photo) continues left to right and waves to Bob (tall man with round glasses, reference photo), who stands near a bench about ten meters ahead.", "persons": ["alice", "bob"]}}
     ]
 }}
 
-NOTICE: In segment 2 above, Alice's full visual description with "as seen in the reference photo" is repeated even though she appeared in segment 1. This is REQUIRED for every segment.
+NOTICE how each character name includes a short identifying tag + "reference photo" to help the video model match names to the correct person.
 """
 
 
@@ -198,7 +215,8 @@ async def _call_gemini(prompt: str, images: list[tuple[str, Image.Image]] | None
         for person_name, img in images:
             content.append(f"\n[Reference photo for {person_name}]:")
             content.append(img)
-        logger.info("Sending multimodal request to Gemini with %d reference photos", len(images))
+        logger.info("[Gemini] Sending multimodal request to %s with %d reference photos",
+                     settings.gemini_model, len(images))
         response = await model.generate_content_async(
             content,
             generation_config=genai.GenerationConfig(
@@ -317,25 +335,22 @@ def parse_gemini_response(
 
 
 def _enforce_character_descriptions_in_segments(result: dict[str, Any]) -> None:
-    """Inject missing character visual descriptions into segment descriptions.
+    """Ensure every character mention in segments has an identifying tag + '(reference photo)'.
 
-    Gemini sometimes omits the character's visual description or the
-    "as seen in the reference photo" phrase from segment descriptions despite
-    explicit instructions.  This function patches any segment whose
-    ``persons`` list names a character whose visual description (from the
-    ``characters`` manifest) does not appear in the segment description.
+    Gemini sometimes omits the identifying tag or ``(reference photo)`` after
+    character names despite explicit instructions.  This function patches any
+    segment where a character from the ``persons`` list is mentioned by name
+    but lacks the tag.  It uses the ``characters`` manifest to inject the
+    brief identifier (e.g., "toddler boy") so the video model can
+    disambiguate who is who.
 
-    The injection is appended as a parenthetical so it doesn't break the
-    narrative flow, e.g.:
+    Example:
 
         "Alice walks into the park."
-        →
-        "Alice (tall woman with dark brown hair, red jacket as seen in the
-        reference photo) walks into the park."
+        →  (with characters={"alice": "adult woman with red jacket"})
+        "Alice (adult woman with red jacket, reference photo) walks into the park."
     """
-    characters: dict[str, str] = result.get("characters") or {}
-    if not characters:
-        return
+    characters_manifest: dict[str, str] = result.get("characters") or {}
 
     for seg in result.get("segments", []):
         persons: list[str] = seg.get("persons") or []
@@ -346,96 +361,57 @@ def _enforce_character_descriptions_in_segments(result: dict[str, Any]) -> None:
         description_lower = description.lower()
 
         for person_name in persons:
-            char_desc = characters.get(person_name)
-            if not char_desc:
-                continue
-
             name_lower = person_name.lower()
 
             # Check if the character's name is even mentioned in the segment
             if name_lower not in description_lower:
                 continue
 
-            # Check if the segment already contains the character's visual
-            # description.  We use two checks:
-            # 1. The manifest description (or a significant portion) already
-            #    appears verbatim in the segment text.
-            # 2. "as seen in the reference photo" appears anywhere in the
-            #    segment with the character's name also present.
-            # Either match means the description is already there.
-            if _segment_already_has_char_description(
-                description_lower, name_lower, char_desc.lower()
-            ):
+            # Check if the segment already has a reference-photo marker
+            if _segment_has_reference_photo_tag(description_lower, name_lower):
                 continue
 
-            # Inject the character description after the first mention of
-            # the character's name in the description.
-            inject_desc = f"{char_desc}"
-            if "as seen in the reference photo" not in inject_desc.lower():
-                inject_desc += " as seen in the reference photo"
+            # Build the tag: "brief identifier, reference photo" or just "reference photo"
+            char_desc = characters_manifest.get(name_lower, "")
+            tag = f"{char_desc}, reference photo" if char_desc else "reference photo"
 
+            # Inject after the first mention of the name
             description = _inject_description_after_name(
-                description, person_name, inject_desc
+                description, person_name, tag
             )
             seg["description"] = description
             # Update for subsequent person checks in the same segment
             description_lower = description.lower()
             logger.info(
-                "Injected character description for '%s' into segment %s",
+                "Injected (%s) tag for '%s' into segment %s",
+                tag,
                 person_name,
                 seg.get("sequence_number", "?"),
             )
 
 
-def _segment_already_has_char_description(
-    description_lower: str, name_lower: str, char_desc_lower: str
+def _segment_has_reference_photo_tag(
+    description_lower: str, name_lower: str
 ) -> bool:
-    """Return True if the segment description already contains the character's
-    visual description from the manifest (or a substantial portion of it).
+    """Return True if a reference-photo marker appears after the character name.
 
-    Uses three complementary checks — any one passing is sufficient:
-
-    1. **Verbatim match**: the full manifest description appears in the text.
-    2. **Key-traits match**: at least 60 % of the significant multi-word
-       phrases from the manifest description appear in the segment text.
-    3. **Photo-ref phrase**: ``"as seen in the reference photo"`` appears in
-       the text *and* the character name is also present (already guaranteed
-       by the caller, but we re-check for safety).
+    Accepts either of the two forms:
+    - ``(reference photo)`` — the preferred concise format
+    - ``as seen in the reference photo`` — legacy verbose format
     """
-    # 1. Full manifest description already in segment text
-    if char_desc_lower in description_lower:
-        return True
-
-    # 2. Extract key descriptive phrases (3+ word spans between commas/ands)
-    #    and check how many appear in the description.
-    # Strip the trailing "as seen in the reference photo" before splitting to
-    # avoid counting it as a trait.
-    traits_text = char_desc_lower.replace("as seen in the reference photo", "").strip()
-    # Split on commas and " and " to get individual trait phrases
-    raw_traits = re.split(r",| and ", traits_text)
-    traits = [t.strip() for t in raw_traits if len(t.strip()) >= 6]
-    if traits:
-        matched = sum(1 for t in traits if t in description_lower)
-        if matched / len(traits) >= 0.6:
-            return True
-
-    # 3. The "as seen in the reference photo" phrase appears *after* this
-    #    character's name (not just anywhere in the segment — another character
-    #    might have it).  Search from each occurrence of the name.
-    phrase = "as seen in the reference photo"
+    markers = ["(reference photo)", "as seen in the reference photo"]
     search_start = 0
     while True:
         name_pos = description_lower.find(name_lower, search_start)
         if name_pos == -1:
             break
-        # Look for the phrase between this name mention and the next name
-        # mention (or end of text), to scope it to this character.
         after_name = name_pos + len(name_lower)
-        # Use a generous window — long descriptions can be 500+ chars
-        window_end = min(after_name + 600, len(description_lower))
+        # Check a reasonable window after the name
+        window_end = min(after_name + 200, len(description_lower))
         window = description_lower[after_name:window_end]
-        if phrase in window:
-            return True
+        for marker in markers:
+            if marker in window:
+                return True
         search_start = after_name
 
     return False
@@ -512,13 +488,19 @@ async def moderate_and_split(
     )
 
     logger.info(
-        "Sending moderation request to Gemini | "
-        "scenario_length=%d person_names=%s photos=%s",
+        "[Gemini] ─── moderation + splitting ───\n"
+        "  model: %s\n"
+        "  scenario length: %d chars\n"
+        "  person names: %s\n"
+        "  reference photos attached: %s\n"
+        "  photo count: %d",
+        settings.gemini_model,
         len(scenario_text),
         person_names or [],
         bool(images),
+        len(images) if images else 0,
     )
-    logger.info("Gemini prompt:\n%s", prompt)
+    logger.debug("[Gemini] Full prompt:\n%s", prompt)
 
     raw_response = await _call_gemini(prompt, images=images)
 
@@ -527,10 +509,10 @@ async def moderate_and_split(
     result = parse_gemini_response(raw_response, person_names=person_names)
 
     logger.info(
-        "Gemini moderation result | approved=%s segments=%d characters=%s",
+        "[Gemini] Moderation result | approved=%s segments=%d characters=%s",
         result["approved"],
         len(result.get("segments", [])),
-        list(result.get("characters", {}).keys()),
+        result.get("characters", {}),
     )
 
     return result

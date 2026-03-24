@@ -19,13 +19,16 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from backend.config import settings
 from backend.database import async_session_factory
 from backend.models.project import Person, Project, ProjectStatus
 from backend.models.scenario import ModerationStatus, Scenario
 from backend.models.video import ClipStatus, FinalVideo, VideoClip
 from backend.services._utils import ffmpeg_exe
-from backend.services.composite_image_service import create_composite_image
-from backend.services.image_gen_service import generate_initial_image
+from backend.services.image_gen_service import (
+    generate_initial_image,
+    generate_transition_image,
+)
 from backend.services.video_gen_service import extract_last_frame, generate_video_clip
 
 logger = logging.getLogger(__name__)
@@ -183,12 +186,23 @@ async def _run(project_id: uuid.UUID, db: AsyncSession) -> None:  # noqa: C901
     os.makedirs(images_dir, exist_ok=True)
     os.makedirs(clips_dir, exist_ok=True)
 
-    # ── reset old clips ────────────────────────────────────────────
+    # ── reset old clips & final video ─────────────────────────────
     for old in (await db.execute(
         select(VideoClip).where(VideoClip.project_id == project.id)
     )).scalars().all():
         await db.delete(old)
+    old_final = (await db.execute(
+        select(FinalVideo).where(FinalVideo.project_id == project.id)
+    )).scalar_one_or_none()
+    if old_final:
+        await db.delete(old_final)
     await db.flush()
+
+    # ── clean stale images from previous runs ─────────────────────
+    for stale in os.listdir(images_dir):
+        stale_path = os.path.join(images_dir, stale)
+        if os.path.isfile(stale_path):
+            os.remove(stale_path)
 
     # ── create clip records ────────────────────────────────────────
     clips: list[VideoClip] = []
@@ -203,16 +217,14 @@ async def _run(project_id: uuid.UUID, db: AsyncSession) -> None:  # noqa: C901
     clips[0].status = ClipStatus.GENERATING
     await db.commit()
     _log("Pipeline [%s]: STEP 1/3 — generating initial reference image "
-         "(uploading ref photos + fal.ai queue, may take 30–90s)...", project_id)
+         "(model: %s, uploading ref photos + fal.ai queue, may take 30–90s)...",
+         project_id, settings.fal_image_model)
     img_start = time.monotonic()
 
-    # Use only the persons appearing in the first segment for the initial image
-    first_seg_persons = getattr(segments[0], "persons", None) or []
-    first_seg_ref_photos = _get_segment_ref_photos(first_seg_persons, person_photo_map)
-    if not first_seg_ref_photos and person_photo_map:
-        # Fallback: if first segment has no persons tagged, use all ref photos
-        first_seg_ref_photos = list(person_photo_map.values())
-    _log("Pipeline [%s]: initial image uses %d person ref photo(s) for segment 1: %s",
+    # Use ALL persons' reference photos for the initial image,
+    # not just those in segment 1, so the model sees every character.
+    first_seg_ref_photos = list(person_photo_map.values())
+    _log("Pipeline [%s]: initial image uses %d person ref photo(s): %s",
          project_id, len(first_seg_ref_photos),
          [os.path.basename(p) for p in first_seg_ref_photos])
 
@@ -235,8 +247,12 @@ async def _run(project_id: uuid.UUID, db: AsyncSession) -> None:  # noqa: C901
 
     # ── step 2: iterative clip generation ──────────────────────────
     _log("Pipeline [%s]: STEP 2/3 — generating %d video clips sequentially "
-         "(each clip ~30–90s: upload → fal.ai queue → render → download)...",
-         project_id, total)
+         "(model: %s, each clip ~30–90s: upload → fal.ai queue → render → download)...",
+         project_id, total, settings.fal_video_model)
+
+    # Track which persons have appeared so far (for transition detection)
+    seen_persons: set[str] = set()
+
     for i, (seg, clip) in enumerate(zip(segments, clips, strict=True)):
         await db.refresh(project)
         if project.status != ProjectStatus.GENERATING:
@@ -253,34 +269,59 @@ async def _run(project_id: uuid.UUID, db: AsyncSession) -> None:  # noqa: C901
         clip_start = time.monotonic()
         elapsed_total = time.monotonic() - pipeline_start
 
-        # Build composite image: last frame + reference photos of persons in THIS segment
-        seg_persons = getattr(seg, "persons", None) or []
-        seg_ref_photos = _get_segment_ref_photos(seg_persons, person_photo_map)
-        _log("Pipeline [%s]: clip %d/%d — persons in segment: %s, ref photos: %d",
-             project_id, i + 1, total, seg_persons, len(seg_ref_photos))
+        seg_persons = set(p.lower() for p in (getattr(seg, "persons", None) or []))
+        new_persons = seg_persons - seen_persons
+        _log("Pipeline [%s]: clip %d/%d — persons in segment: %s, new: %s",
+             project_id, i + 1, total, sorted(seg_persons), sorted(new_persons))
 
+        # If this segment introduces characters not seen before,
+        # generate a transition image so the video model gets a frame
+        # that already contains the correct person appearance.
         input_image = current_image
-        if seg_ref_photos:
-            composite_path = os.path.join(images_dir, f"composite_{seq:03d}.jpg")
-            try:
-                input_image = await asyncio.to_thread(
-                    create_composite_image,
-                    current_image,
-                    seg_ref_photos,
-                    composite_path,
-                )
-                _log("Pipeline [%s]: clip %d/%d — composite image created with %d ref photo(s)",
-                     project_id, i + 1, total, len(seg_ref_photos))
-            except Exception as exc:
-                logger.warning(
-                    "Pipeline [%s]: composite creation failed for clip %d, "
-                    "falling back to last frame only: %s",
-                    project_id, seq, exc,
-                )
-                input_image = current_image
+        if new_persons and person_photo_map and i > 0:
+            # Pass ALL characters in the segment (not just new ones) so the
+            # image model can render every person accurately.
+            all_seg_ref_photos = _get_segment_ref_photos(sorted(seg_persons), person_photo_map)
+            if all_seg_ref_photos:
+                transition_path = os.path.join(images_dir, f"transition_{seq:03d}.jpg")
+                _log("Pipeline [%s]: clip %d/%d — generating transition image "
+                     "for new character(s): %s (providing %d total ref photos)",
+                     project_id, i + 1, total, sorted(new_persons),
+                     len(all_seg_ref_photos))
+                try:
+                    input_image = await generate_transition_image(
+                        prompt=seg.description,
+                        output_path=transition_path,
+                        style=project.video_style.value,
+                        reference_image_paths=all_seg_ref_photos,
+                        previous_frame_path=current_image,
+                    )
+                    _log("Pipeline [%s]: clip %d/%d — transition image ready",
+                         project_id, i + 1, total)
+                except Exception as exc:
+                    logger.warning(
+                        "Pipeline [%s]: transition image failed for clip %d, "
+                        "falling back to last frame: %s",
+                        project_id, seq, exc,
+                    )
+                    input_image = current_image
 
-        _log("Pipeline [%s]: clip %d/%d — uploading image & submitting to fal.ai "
-             "(pipeline elapsed %.0fs)", project_id, i + 1, total, elapsed_total)
+        seen_persons.update(seg_persons)
+
+        _log(
+            "Pipeline [%s]: ═══ Generating clip %d/%d ═══\n"
+            "  attached image: %s\n"
+            "  prompt: %s\n"
+            "  style: %s\n"
+            "  output: %s\n"
+            "  pipeline elapsed: %.0fs",
+            project_id, i + 1, total,
+            input_image,
+            seg.description,
+            project.video_style.value,
+            clip_path,
+            elapsed_total,
+        )
 
         # retry loop (FR-024)
         last_err: Exception | None = None
@@ -289,7 +330,6 @@ async def _run(project_id: uuid.UUID, db: AsyncSession) -> None:  # noqa: C901
                 video_path = await generate_video_clip(
                     image_path=input_image, prompt=seg.description,
                     output_path=clip_path, style=project.video_style.value,
-                    has_person_refs=bool(seg_ref_photos) and input_image != current_image,
                 )
                 last_err = None
                 break

@@ -109,7 +109,7 @@ Avatarium is a server-rendered FastAPI application with API endpoints that power
 | **Page Routes** | Server-rendered HTML pages via Jinja2; cookie-based auth | `backend/api/pages.py` |
 | **API Routes** | JSON REST endpoints; Bearer JWT auth | `backend/api/auth.py`, `projects.py`, `scenarios.py`, `generation.py`, `health.py` |
 | **Dependencies** | Shared FastAPI dependencies (ownership verification, auth) | `backend/api/dependencies.py`, `backend/api/auth.py::get_current_user` |
-| **Service Layer** | Business logic; isolated from HTTP concerns | `backend/services/auth_service.py`, `upload_service.py`, `moderation_service.py`, `pipeline_service.py`, `image_gen_service.py`, `video_gen_service.py` |
+| **Service Layer** | Business logic; isolated from HTTP concerns | `backend/services/auth_service.py`, `upload_service.py`, `moderation_service.py`, `pipeline_service.py`, `image_gen_service.py`, `video_gen_service.py`, `fal_polling.py`, `_utils.py` |
 | **Data Layer** | SQLAlchemy ORM models + Pydantic schemas | `backend/models/`, `backend/schemas/` |
 | **Database** | Async SQLite (dev) / PostgreSQL (prod) via `aiosqlite` | `backend/database.py` |
 | **External APIs** | fal.ai (image + video generation), Google Gemini (moderation), Google OAuth | Called from service layer |
@@ -555,7 +555,7 @@ The final video is what the user actually watches — all the individual clips c
 | `file_size` | Integer | NOT NULL | |
 | `created_at` | DateTime(tz) | NOT NULL | |
 
-> ⚠️ **Note**: The `FinalVideo` model exists in code but is **never instantiated** — no concatenation service creates final videos. See [Section 15](#15-implementation-status).
+> **Note**: The `FinalVideo` model has a `UNIQUE` constraint on `project_id`, meaning each project can have at most one final video. The pipeline creates a `FinalVideo` record after successful concatenation and deletes any previous record before a re-run.
 
 ### Enum Types
 
@@ -574,12 +574,12 @@ The final video is what the user actually watches — all the individual clips c
 | `submitted` | User submitted scenario | ❌ Never assigned |
 | `moderating` | Gemini moderation in progress | ❌ Never assigned |
 | `splitting` | Scenario being split into segments | ❌ Never assigned |
-| `reviewing` | User reviewing segments | ❌ Never assigned |
-| `generating` | Video pipeline running | ✅ Set in `generation.py` |
-| `concatenating` | Clips being joined | ❌ Never assigned |
-| `completed` | Final video ready | ❌ Never assigned |
+| `reviewing` | User reviewing segments | ✅ Set in `generation.py::abort_generation()` |
+| `generating` | Video pipeline running | ✅ Set in `generation.py::start_generation()` |
+| `concatenating` | Clips being joined | ✅ Set in `pipeline_service.py` after all clips rendered |
+| `completed` | Final video ready | ✅ Set in `pipeline_service.py` after concatenation |
 | `rejected` | Scenario failed moderation | ❌ Never assigned |
-| `failed` | Pipeline error | ❌ Never assigned |
+| `failed` | Pipeline error | ✅ Set in `pipeline_service.py` via `_fail()` helper |
 
 See the [Project Status State Machine](#project-status-state-machine) below for the full intended lifecycle.
 
@@ -605,9 +605,9 @@ See the [Project Status State Machine](#project-status-state-machine) below for 
 | Value | Description | Used? |
 |-------|-------------|-------|
 | `pending` | Awaiting generation | ✅ Default |
-| `generating` | Currently generating | ❌ Never assigned |
-| `completed` | Generated successfully | ❌ Never assigned |
-| `failed` | Generation failed | ❌ Never assigned |
+| `generating` | Currently generating | ✅ Set in `pipeline_service.py` before each clip |
+| `completed` | Generated successfully | ✅ Set in `pipeline_service.py` after clip + frame extraction |
+| `failed` | Generation failed | ✅ Set in `pipeline_service.py` via `_fail()` helper |
 
 ### Project Status State Machine
 
@@ -630,33 +630,45 @@ stateDiagram-v2
     note right of REJECTED : ❌ NOT implemented
 
     SPLITTING --> REVIEWING : Segments ready for review
-    note right of REVIEWING : ❌ NOT implemented
+    note right of REVIEWING : ✅ Set by abort_generation()
 
     REVIEWING --> GENERATING : User starts generation
-    note left of GENERATING : ✅ Only implemented transition
+    note left of GENERATING : ✅ Implemented
 
     state GENERATING {
         [*] --> GeneratingClips
+        GeneratingClips --> TransitionImage : New character appears
+        TransitionImage --> GeneratingClips
         GeneratingClips --> ExtractingFrame
         ExtractingFrame --> GeneratingClips : Next segment
         ExtractingFrame --> [*] : All segments done
     }
 
     GENERATING --> CONCATENATING : All clips ready
-    GENERATING --> FAILED : Pipeline error
+    note right of CONCATENATING : ✅ Implemented
 
-    note right of CONCATENATING : ❌ NOT implemented
-    note right of FAILED : ❌ NOT implemented
+    GENERATING --> FAILED : Pipeline error
+    note right of FAILED : ✅ Implemented
 
     CONCATENATING --> COMPLETED : Final video ready
-    note right of COMPLETED : ❌ NOT implemented
+    note right of COMPLETED : ✅ Implemented
+
+    CONCATENATING --> FAILED : ffmpeg error
+
+    GENERATING --> REVIEWING : User aborts
+    CONCATENATING --> REVIEWING : User aborts
+    FAILED --> REVIEWING : User aborts
 ```
 
-> ⚠️ **Current state**: Only two transitions are implemented:
+> **Current state**: The following transitions are implemented in code:
 > 1. `→ DRAFT` — automatic default when a project is created
 > 2. `any → GENERATING` — triggered by `POST /api/projects/{id}/generate` in `generation.py`
+> 3. `GENERATING → CONCATENATING` — set by `pipeline_service.py` after all clips are rendered
+> 4. `CONCATENATING → COMPLETED` — set by `pipeline_service.py` after successful ffmpeg concatenation
+> 5. `GENERATING / CONCATENATING → FAILED` — set by `pipeline_service.py` on any unrecoverable error
+> 6. `GENERATING / CONCATENATING / FAILED → REVIEWING` — triggered by `POST /api/projects/{id}/abort`
 >
-> All other transitions exist as intended design but have no code to trigger them. The scenario moderation flow in `scenarios.py` sets `ModerationStatus` on the `Scenario` record but does **not** update `ProjectStatus`.
+> The intermediate moderation-flow transitions (`SUBMITTED`, `MODERATING`, `SPLITTING`, `REJECTED`) exist as enum values but have no code to trigger them. The scenario moderation flow in `scenarios.py` sets `ModerationStatus` on the `Scenario` record but does **not** update `ProjectStatus`.
 
 ---
 
@@ -952,24 +964,57 @@ The video generation pipeline iteratively creates a video clip for each segment,
 
 > **What is fal.ai?** Fal.ai is a cloud service that hosts AI models. Instead of running expensive AI image/video generation on our own server, we send requests to fal.ai's servers and they return the results. This is common in modern apps — you pay per use instead of buying your own GPU hardware.
 
-1. **Initial Image Generation** (`image_gen_service.generate_initial_image`):
-   - Takes the first segment's description + style directive
-   - Calls fal.ai Qwen Image model via `fal_client.subscribe()` — this means "send the request and wait for the result"
-   - Style prefix: `"cartoon, stylized animation style"` (animation) or `"realistic, cinematic movie style"` (movie_like)
-   - Downloads the result via `httpx` (an HTTP client library, like a browser for code) and saves locally
+The pipeline is launched as a **FastAPI background task** via `BackgroundTasks.add_task(run_pipeline_background, project_id)` in `generation.py`. It owns its own database session since it runs outside the request lifecycle.
 
-2. **Iterative Video Clip Generation** (for each segment):
+**0. Reset Phase** (re-run cleanup):
+   - Deletes all existing `VideoClip` records for the project
+   - Deletes any existing `FinalVideo` record (avoids `UNIQUE` constraint violation on re-run)
+   - Removes all files from the `images/` directory to clear stale artifacts from previous runs
+   - Creates fresh `VideoClip` records in `PENDING` status for each segment
+
+1. **Reference Photo Collection** (`_collect_reference_photos`):
+   - Loads all `Person` records for the project (with their photos via eager loading)
+   - Builds a `dict[str, str]` mapping each person name (lowercase) to their best photo file path (lowest `sequence_number`)
+   - These reference photos are used throughout the pipeline to condition the AI models
+
+2. **Initial Image Generation** (`image_gen_service.generate_initial_image`):
+   - Takes the first segment's description + style directive + **all** reference photos from the project
+   - Uploads reference photos to fal.ai storage, sets the first photo as `image_url` (primary conditioning) and additional photos as `image_urls`
+   - Calls fal.ai Qwen Image model via `submit_and_poll()` — submits the request and polls for completion
+   - Style prefix: `"stylized cartoon animation style..."` (animation) or `"photorealistic cinematic movie style..."` (movie_like)
+   - Prompt instructs the model to generate a person who looks EXACTLY like the reference photo
+   - Downloads the result via `httpx` and saves locally
+
+3. **Iterative Video Clip Generation** (for each segment):
    - `video_gen_service.generate_video_clip()` calls fal.ai LTX Video 13B
-   - Parameters: 854×480 resolution, 121 frames (~5s at 24fps), no audio
+   - Parameters: 768×512 resolution, 121 frames (~5s at 24fps), no audio
    - Input: current image + segment description as prompt
    - Output: MP4 video clip downloaded via `httpx`
 
-3. **Last Frame Extraction** (`video_gen_service.extract_last_frame`):
+4. **Transition Image Generation** (`image_gen_service.generate_transition_image`):
+   - Triggered when a segment introduces characters not seen in previous segments
+   - The pipeline tracks a `seen_persons` set; when `new_persons = seg_persons - seen_persons` is non-empty, a transition image is generated
+   - **Reference photos go FIRST** as `image_url` (primary conditioning) so the model anchors on character appearance
+   - **Previous scene frame goes LAST** as supplementary context for scene continuity (environment, lighting, camera angle)
+   - This ordering is critical — the fal.ai Qwen Image model's `image_url` parameter has the strongest influence on the output
+   - Falls back to the last frame (no transition) if generation fails
+
+5. **Last Frame Extraction** (`video_gen_service.extract_last_frame`):
    - Runs FFmpeg subprocess: `ffmpeg -sseof -0.1 -i clip.mp4 -vframes 1 -y last_frame.jpg`
    > **What is FFmpeg?** FFmpeg is a free, widely-used command-line tool for processing video and audio files. Here it is used as a "subprocess" — meaning the Python code launches FFmpeg as a separate program, waits for it to finish, and then uses the resulting file. The command above says: "Go to 0.1 seconds before the end of the video, grab one frame, and save it as a JPEG image."
    - Extracts the final frame to use as input for the next segment's video
 
-4. **Chaining**: The extracted last frame becomes `current_image` for the next iteration — creating visual continuity between scenes
+6. **Chaining**: The extracted last frame becomes `current_image` for the next iteration — creating visual continuity between scenes
+
+7. **Concatenation** (`_concatenate_clips`):
+   - After all clips are generated, the project status is set to `CONCATENATING`
+   - Builds an ffmpeg concat list file and runs `ffmpeg -f concat -safe 0 -i list.txt -c copy -y final_video.mp4`
+   - This joins all clips end-to-end without re-encoding (fast, lossless)
+
+8. **Finalization**:
+   - Creates a `FinalVideo` record with the final video path, total duration, total cost, and file size
+   - Sets project status to `COMPLETED`
+   - Computes `actual_cost` as `(num_clips × $0.04) + $0.02` (image generation cost)
 
 ### Retry Logic
 - `MAX_RETRIES = 1` — each failed clip is retried once
@@ -977,48 +1022,51 @@ The video generation pipeline iteratively creates a video clip for each segment,
 
 ### Output Structure
 ```
-{output_dir}/
+generated/{project_id}/
 ├── images/
 │   ├── initial_image.jpg
-│   ├── last_frame_1.jpg
-│   ├── last_frame_2.jpg
+│   ├── last_frame_001.jpg
+│   ├── last_frame_002.jpg
+│   ├── transition_003.jpg   ← generated when segment 3 introduces a new character
 │   └── ...
-└── clips/
-    ├── clip_1.mp4
-    ├── clip_2.mp4
-    └── ...
+├── clips/
+│   ├── clip_001.mp4
+│   ├── clip_002.mp4
+│   └── ...
+├── concat_list.txt           ← ffmpeg concat demuxer input
+└── final_video.mp4           ← concatenated output
 ```
-
-### ⚠️ Critical Gap: `launch_pipeline()` Is a Placeholder
-
-> **What is a placeholder function?** Sometimes during development, programmers write a function with only the name and no actual code inside (just `pass` in Python, which means "do nothing"). This is to mark that the function *should* exist and *will* be implemented later. It lets other parts of the code reference the function without breaking, even before it's ready.
-
-The `launch_pipeline()` function in `generation.py` has a body of `pass`. It is called after setting the project status to `GENERATING`, but it **never actually invokes `pipeline_service.run_pipeline()`**. The pipeline logic is complete as a synchronous-style async function, but the background task wiring is missing. See [Section 15](#15-implementation-status).
 
 ### Pipeline Flow
 
 ```mermaid
 flowchart TD
-    A(["Start Pipeline"]) --> B["Generate Initial Image<br/>fal.ai Qwen Image"]
+    A(["Start Pipeline"]) --> RESET["Reset Phase<br/>Delete old clips & final video<br/>Clean stale images"]
+    RESET --> REF["Collect Reference Photos<br/>person name → best photo path"]
+    REF --> B["Generate Initial Image<br/>fal.ai Qwen Image<br/>All ref photos as conditioning"]
     B --> C["Set current_image = initial_image"]
     C --> D{"More segments?"}
 
-    D -- No --> Z(["Pipeline Complete<br/>Return results"])
+    D -- No --> CONCAT["Concatenate Clips<br/>ffmpeg concat demuxer<br/>Status → CONCATENATING"]
 
-    D -- Yes --> E["Get next segment description"]
+    D -- Yes --> E["Get next segment"]
 
     subgraph seg ["For Each Segment"]
-        E --> F["Generate Video Clip<br/>fal.ai LTX Video 13B<br/>854×480, 121 frames, no audio"]
+        E --> TRANS{"New characters<br/>appearing?"}
+        TRANS -- Yes --> TI["Generate Transition Image<br/>Ref photos as primary (image_url)<br/>Previous frame as secondary"]
+        TRANS -- No --> F
+        TI --> F["Generate Video Clip<br/>fal.ai LTX Video 13B<br/>768×512, 121 frames, no audio"]
         F --> G{"Success?"}
         G -- Yes --> H["Extract Last Frame<br/>FFmpeg: -sseof -0.1 -vframes 1"]
         G -- No --> I{"retry_count < 1?"}
         I -- Yes --> F
-        I -- No --> X(["Pipeline Failed ❌"])
-        H --> J["current_image = last_frame"]
-        J --> K["Store result: video_path, last_frame_path"]
+        I -- No --> X(["Pipeline Failed ❌<br/>Status → FAILED"])
+        H --> J["current_image = last_frame<br/>Clip status → COMPLETED"]
     end
 
-    K --> D
+    J --> D
+
+    CONCAT --> FINAL["Create FinalVideo record<br/>Status → COMPLETED"]
 ```
 
 ---
@@ -1072,8 +1120,9 @@ flowchart TD
 |--------|------|------|---------------|----------------|
 | `POST` | `/api/projects/{id}/generate` | Yes | — | `{"status": "generating", "project_id": "..."}` (202) |
 | `GET` | `/api/projects/{id}/status` | Yes | — | `PipelineStatusResponse` |
+| `POST` | `/api/projects/{id}/abort` | Yes | — | `{"status": "aborted", "project_id": "..."}` |
 
-> **Note**: Also shares prefix `/api/projects`. `start_generation` checks for an approved scenario before launching.
+> **Note**: Also shares prefix `/api/projects`. `start_generation` checks for an approved scenario before launching. `abort_generation` resets the project to `REVIEWING` and deletes all clips and final video records.
 
 ### Pages — `backend/api/pages.py` (no prefix)
 
@@ -1359,16 +1408,25 @@ The following features are **scaffolded** (models, schemas, or enum values exist
 
 | Feature | Status | Severity | Detail | Relevant Section |
 |---------|--------|----------|--------|-----------------|
-| `launch_pipeline()` | **Placeholder** (`pass`) | 🔴 Critical | `generation.py` L22-35 — body is literally `pass`. Never calls `pipeline_service.run_pipeline()`. Docstring says "will be wired to BackgroundTasks or a task queue." | [Section 8](#8-video-generation-pipeline) |
-| Video concatenation | **Not implemented** | 🔴 Critical | No concatenation service exists. `FinalVideo` model and `CONCATENATING` status are scaffolded. FFmpeg is only used for last-frame extraction. | [Section 8](#8-video-generation-pipeline) |
-| `FinalVideoResponse` in project detail | **Stub** | 🟡 Medium | `schemas/project.py` L48: `final_video: dict \| None = None  # Will be FinalVideoResponse in Phase 6` | [Section 4](#4-data-model--enums) |
-| Most `ProjectStatus` transitions | **Not wired** | 🔴 Critical | Only `→ GENERATING` is implemented. All other transitions (`SUBMITTED`, `MODERATING`, `SPLITTING`, `REVIEWING`, `CONCATENATING`, `COMPLETED`, `REJECTED`, `FAILED`) exist as enum values but are never assigned. | [Section 4](#4-data-model--enums) |
+| `FinalVideoResponse` in project detail | **Stub** | 🟡 Medium | `schemas/project.py`: `final_video: dict \| None = None  # Will be FinalVideoResponse in Phase 6` | [Section 4](#4-data-model--enums) |
+| Moderation `ProjectStatus` transitions | **Not wired** | 🟡 Medium | `SUBMITTED`, `MODERATING`, `SPLITTING`, `REJECTED` exist as enum values but are never assigned. The scenario moderation flow in `scenarios.py` sets `ModerationStatus` on the `Scenario` record but does not update `ProjectStatus`. | [Section 4](#4-data-model--enums) |
 | `GenerationStatus` transitions | **Not wired** | 🟡 Medium | Segment `generation_status` stays at `pending` — no code updates it during pipeline execution. | [Section 4](#4-data-model--enums) |
-| `ClipStatus` transitions | **Not wired** | 🟡 Medium | `VideoClip.status` stays at `pending` — no code updates it. | [Section 4](#4-data-model--enums) |
 | Email verification | **Scaffolded column** | 🟡 Medium | `User.email_verified` exists (default `False`); Google OAuth auto-sets `True`. But no email sending, no verification token, no verification endpoint. Constitution mandates email verification for email/password registrations. | [Section 5](#5-authentication-flow) |
 | Terms of Use acceptance | **Scaffolded column** | 🟡 Medium | `User.terms_accepted_at` exists but no acceptance endpoint, no middleware gate preventing access. Constitution mandates ToU presentation and acceptance before feature access. | [Section 5](#5-authentication-flow) |
 | Contract tests | **Empty directory** | 🟢 Low | `tests/contract/` contains only `__init__.py`. | [Section 13](#13-test-infrastructure) |
 | Ad integration | **Partial skeleton** | 🟢 Low | `base.html` has a single `ad-zone--footer` div. Constitution mandates sidebar, banner, and interstitial zones. No ad provider connected. | [Section 10](#10-frontend--templates) |
+
+### Recently Completed (No Longer Scaffolded)
+
+The following features were previously listed as unimplemented but are now fully functional:
+
+| Feature | Detail |
+|---------|--------|
+| Pipeline background task | `generation.py` wires `run_pipeline_background` via `BackgroundTasks.add_task()`. The pipeline runs end-to-end as a background task with its own DB session. |
+| Video concatenation | `pipeline_service._concatenate_clips()` uses ffmpeg concat demuxer to join all clips. `FinalVideo` records are created after successful concatenation. |
+| Pipeline `ProjectStatus` transitions | `GENERATING → CONCATENATING → COMPLETED` and `→ FAILED` are fully wired in `pipeline_service.py`. `abort_generation()` sets `REVIEWING`. |
+| `ClipStatus` transitions | `PENDING → GENERATING → COMPLETED` (or `FAILED`) are tracked per-clip in `pipeline_service.py`. |
+| Transition image generation | When a segment introduces new characters, `generate_transition_image()` creates a scene frame conditioned on reference photos before video generation. |
 
 ---
 
@@ -1406,6 +1464,8 @@ Every backend Python file and where it is documented in this walkthrough:
 | 24 | `backend/services/pipeline_service.py` | [8. Pipeline](#8-video-generation-pipeline) |
 | 25 | `backend/services/image_gen_service.py` | [8. Pipeline](#8-video-generation-pipeline) |
 | 26 | `backend/services/video_gen_service.py` | [8. Pipeline](#8-video-generation-pipeline) |
-| 27 | `backend/middleware/rate_limit.py` | [11. Middleware](#11-middleware) |
+| 27 | `backend/services/fal_polling.py` | [8. Pipeline](#8-video-generation-pipeline) |
+| 28 | `backend/services/_utils.py` | [8. Pipeline](#8-video-generation-pipeline) |
+| 29 | `backend/middleware/rate_limit.py` | [11. Middleware](#11-middleware) |
 
-**Coverage**: 27/27 backend Python files documented (100%).
+**Coverage**: 29/29 backend Python files documented (100%).
