@@ -99,6 +99,7 @@ async def get_project(
         PersonResponse(
             id=p.id,
             name=p.name,
+            description=p.description,
             photo_count=len(p.photos),
         )
         for p in project.persons
@@ -243,12 +244,45 @@ async def list_photos(
             "person": PersonResponse(
                 id=person.id,
                 name=person.name,
+                description=person.description,
                 photo_count=len(person.photos),
             ),
             "photos": [PhotoResponse.model_validate(ph) for ph in person.photos],
         })
 
     return PhotoGroupResponse(persons=groups)
+
+
+# ── Person Description Endpoint ───────────────────────────────────────
+
+
+from pydantic import BaseModel
+
+class UpdatePersonDescriptionsRequest(BaseModel):
+    descriptions: dict[str, str]  # {person_name (any case): description}
+
+
+@router.patch("/{project_id}/persons/descriptions", status_code=status.HTTP_200_OK)
+async def update_person_descriptions(
+    project_id: uuid.UUID,
+    body: UpdatePersonDescriptionsRequest,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Save user-written descriptions for each person (replaces Gemini photo analysis)."""
+    project = await get_user_project(project_id, current_user.id, db)
+
+    updated: list[str] = []
+    for person in project.persons:
+        desc = body.descriptions.get(person.name.lower()) or body.descriptions.get(person.name)
+        if desc is not None:
+            person.description = desc.strip() or None
+            updated.append(person.name)
+
+    if updated:
+        await db.commit()
+
+    return {"updated": updated}
 
 
 @router.delete(

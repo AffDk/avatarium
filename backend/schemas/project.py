@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from backend.models.project import VideoStyle
 
@@ -24,8 +24,14 @@ class ProjectResponse(BaseModel):
     status: str
     estimated_cost: float | None = None
     actual_cost: float | None = None
+    video_resolution: str = "480p"
     created_at: datetime
     updated_at: datetime
+
+    @field_validator("video_resolution", mode="before")
+    @classmethod
+    def _default_resolution(cls, v: object) -> str:
+        return v if isinstance(v, str) else "480p"
 
     model_config = {"from_attributes": True}
 
@@ -35,6 +41,7 @@ class PersonResponse(BaseModel):
 
     id: uuid.UUID
     name: str
+    description: str | None = None
     photo_count: int = 0
 
     model_config = {"from_attributes": True}

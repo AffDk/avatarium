@@ -31,11 +31,18 @@ def _style_directive(style: str) -> str:
     return "cinematic movie style, photorealistic"
 
 
+_RESOLUTION_MAP: dict[str, tuple[int, int]] = {
+    "480p": (768, 512),
+    "720p": (1280, 720),
+}
+
+
 async def generate_video_clip(
     image_path: str,
     prompt: str,
     output_path: str,
     style: str = "animation",
+    resolution: str = "480p",
 ) -> str:
     """Generate a ~5-second video clip from *image_path* via fal.ai LTX Video.
 
@@ -45,6 +52,7 @@ async def generate_video_clip(
 
     Returns the local path of the saved clip.
     """
+    width, height = _RESOLUTION_MAP.get(resolution, (DEFAULT_VIDEO_WIDTH, DEFAULT_VIDEO_HEIGHT))
     style_dir = _style_directive(style)
     styled_prompt = (
         f"{style_dir}. "
@@ -62,14 +70,15 @@ async def generate_video_clip(
         "  model: %s\n"
         "  input image: %s\n"
         "  prompt: %s\n"
-        "  resolution: %dx%d\n"
+        "  resolution: %dx%d (%s)\n"
         "  frames: 121 @ 24fps (~5s)\n"
         "  output: %s",
         settings.fal_video_model,
         image_path,
         styled_prompt,
-        DEFAULT_VIDEO_WIDTH,
-        DEFAULT_VIDEO_HEIGHT,
+        width,
+        height,
+        resolution,
         output_path,
     )
     logger.info("[VideoGen] Uploading input image to fal.ai storage...")
@@ -83,8 +92,8 @@ async def generate_video_clip(
             "image_url": image_url,
             "num_frames": 121,
             "fps": 24,
-            "width": DEFAULT_VIDEO_WIDTH,
-            "height": DEFAULT_VIDEO_HEIGHT,
+            "width": width,
+            "height": height,
             "audio": False,
         },
         timeout=VIDEO_GEN_TIMEOUT,
