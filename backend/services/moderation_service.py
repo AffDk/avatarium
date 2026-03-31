@@ -172,6 +172,24 @@ EXAMPLE OUTPUT (with characters):
 NOTICE how each character name includes a short identifying tag + "reference photo" to help the video model match names to the correct person.
 """
 
+_CHARACTERS_SECTION_WITH_DESCRIPTIONS = """
+CHARACTERS (with user-provided visual descriptions — no photos attached):
+{character_descriptions_text}
+
+CRITICAL — CHARACTER IDENTIFICATION RULES:
+The user has described each person above. Use these descriptions to write segment descriptions that help the video model render each character correctly.
+
+RULES:
+- In the "characters" JSON field, map each name to a BRIEF identifying tag (3-6 words) derived from the user description: e.g., "adult woman with red jacket", "young toddler boy".
+- In EVERY segment description, identify each character with their name followed by their brief tag and "reference photo" in parentheses — e.g., "Alice (adult woman with red jacket, reference photo) walks into the park."
+- Keep the tag short — just enough to distinguish characters from each other.
+- Focus segment text on ACTION, MOVEMENT, ENVIRONMENT, CAMERA ANGLE, and LIGHTING.
+- Even if a character appeared in a previous segment, you MUST include their identifying tag and "reference photo" in EVERY segment.
+- Describe spatial relationships between characters — do NOT use frame positions like "left of frame".
+- Each segment's "persons" array MUST list only the character names who appear in that segment (lowercase).
+- Only use character names from the list above — do NOT invent new character names.
+"""
+
 
 def _load_photo_images(photo_paths: dict[str, list[str]]) -> list[tuple[str, Image.Image]]:
     """Load photo files as PIL Images for multimodal Gemini input.
@@ -395,11 +413,11 @@ def _segment_has_reference_photo_tag(
 ) -> bool:
     """Return True if a reference-photo marker appears after the character name.
 
-    Accepts either of the two forms:
-    - ``(reference photo)`` — the preferred concise format
-    - ``as seen in the reference photo`` — legacy verbose format
+    Matches both the concise ``(reference photo)`` form and compound tags that
+    Gemini writes such as ``(young woman with dark hair, reference photo)``
+    — both contain the substring ``reference photo`` in the window after the
+    character name.  Also accepts the legacy verbose form.
     """
-    markers = ["(reference photo)", "as seen in the reference photo"]
     search_start = 0
     while True:
         name_pos = description_lower.find(name_lower, search_start)
@@ -409,9 +427,11 @@ def _segment_has_reference_photo_tag(
         # Check a reasonable window after the name
         window_end = min(after_name + 200, len(description_lower))
         window = description_lower[after_name:window_end]
-        for marker in markers:
-            if marker in window:
-                return True
+        # Accept any form that contains "reference photo" (with or without a
+        # leading opening parenthesis, so compound tags like
+        # "(young lady in white dress, reference photo)" are detected too).
+        if "reference photo" in window:
+            return True
         search_start = after_name
 
     return False
@@ -441,6 +461,7 @@ async def moderate_and_split(
     scenario_text: str,
     person_names: list[str] | None = None,
     photo_paths: dict[str, list[str]] | None = None,
+    person_descriptions: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Moderate scenario content and split into segments using Gemini.
 
@@ -448,8 +469,11 @@ async def moderate_and_split(
         scenario_text: The raw scenario text to moderate and split.
         person_names: Known person names from uploaded photos. None = no persons.
         photo_paths: Mapping of person_name → list of photo file paths for
-                     multimodal analysis. When provided, Gemini sees the actual
-                     photos and describes characters accurately.
+                     multimodal analysis. Skipped when person_descriptions covers
+                     all persons (saves multimodal token cost).
+        person_descriptions: User-provided visual descriptions per person
+                             (name → description). When provided for all persons,
+                             replaces photo-based analysis entirely.
 
     Returns:
         Dict with keys: approved (bool), rejection_reason (str|None),
@@ -462,7 +486,23 @@ async def moderate_and_split(
     # Build the characters section only when person_names is non-empty
     images: list[tuple[str, Image.Image]] | None = None
     if person_names:
-        if photo_paths:
+        all_described = (
+            person_descriptions is not None
+            and all(n in person_descriptions or n.lower() in person_descriptions
+                    for n in person_names)
+        )
+        if all_described and person_descriptions:
+            # Use user-provided descriptions — no photo upload needed
+            desc_lines = "\n".join(
+                f"- {name}: {person_descriptions.get(name) or person_descriptions.get(name.lower(), '')}"
+                for name in person_names
+            )
+            characters_section = _CHARACTERS_SECTION_WITH_DESCRIPTIONS.format(
+                character_descriptions_text=desc_lines,
+            )
+            images = None
+            logger.info("[Gemini] Using user-provided descriptions for %d person(s) — skipping photos", len(person_names))
+        elif photo_paths:
             # Use the photo-aware prompt that instructs Gemini to describe
             # characters from the attached reference images
             characters_section = _CHARACTERS_SECTION_WITH_PHOTOS.format(

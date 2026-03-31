@@ -167,8 +167,8 @@ async def _run(project_id: uuid.UUID, db: AsyncSession) -> None:  # noqa: C901
     segments = sorted(scenario.segments, key=lambda s: s.sequence_number)
     total = len(segments)
     pipeline_start = time.monotonic()
-    _log("Pipeline [%s]: starting — %d segments, estimated time ~%d–%d min",
-         project_id, total, total * 1, total * 2)
+    _log("Pipeline [%s]: starting — %d segments, resolution=%s, estimated time ~%d–%d min",
+         project_id, total, project.video_resolution or "480p", total * 1, total * 2)
 
     # ── load reference photos ────────────────────────────────────────
     persons = (await db.execute(
@@ -247,8 +247,8 @@ async def _run(project_id: uuid.UUID, db: AsyncSession) -> None:  # noqa: C901
 
     # ── step 2: iterative clip generation ──────────────────────────
     _log("Pipeline [%s]: STEP 2/3 — generating %d video clips sequentially "
-         "(model: %s, each clip ~30–90s: upload → fal.ai queue → render → download)...",
-         project_id, total, settings.fal_video_model)
+         "(model: %s, resolution=%s, each clip ~30–90s: upload → fal.ai queue → render → download)...",
+         project_id, total, settings.fal_video_model, project.video_resolution or "480p")
 
     # Track which persons have appeared so far (for transition detection)
     seen_persons: set[str] = set()
@@ -313,23 +313,28 @@ async def _run(project_id: uuid.UUID, db: AsyncSession) -> None:  # noqa: C901
             "  attached image: %s\n"
             "  prompt: %s\n"
             "  style: %s\n"
+            "  resolution: %s\n"
             "  output: %s\n"
             "  pipeline elapsed: %.0fs",
             project_id, i + 1, total,
             input_image,
             seg.description,
             project.video_style.value,
+            project.video_resolution or "480p",
             clip_path,
             elapsed_total,
         )
 
         # retry loop (FR-024)
         last_err: Exception | None = None
+        seg_ref_photos = _get_segment_ref_photos(sorted(seg_persons), person_photo_map)
         for attempt in range(1 + MAX_RETRIES):
             try:
                 video_path = await generate_video_clip(
                     image_path=input_image, prompt=seg.description,
                     output_path=clip_path, style=project.video_style.value,
+                    resolution=project.video_resolution or "480p",
+                    reference_image_paths=seg_ref_photos or None,
                 )
                 last_err = None
                 break

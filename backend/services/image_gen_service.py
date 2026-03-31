@@ -9,7 +9,7 @@ import logging
 import os
 
 from backend.config import settings
-from backend.services._utils import download_file
+from backend.services._utils import download_file, prepare_image_for_upload
 from backend.services.fal_polling import submit_and_poll
 
 try:
@@ -25,15 +25,27 @@ _MAX_REF_PHOTOS = 3
 
 
 async def _upload_reference_photos(photo_paths: list[str]) -> list[str]:
-    """Upload up to *_MAX_REF_PHOTOS* local photos to fal.ai storage."""
+    """Upload up to *_MAX_REF_PHOTOS* local photos to fal.ai storage.
+
+    Each photo is first compressed to ≤1024 px longest side via
+    prepare_image_for_upload() so large files / OneDrive-backed paths
+    never trigger fal.ai's 408 upload timeout.
+    """
     urls: list[str] = []
     for path in photo_paths[:_MAX_REF_PHOTOS]:
+        compressed_path, is_temp = prepare_image_for_upload(path)
         try:
-            url = await fal_client.upload_file_async(path)
+            url = await fal_client.upload_file_async(compressed_path)
             urls.append(url)
             logger.info("Uploaded reference photo %s → %s", path, url)
         except Exception as exc:
             logger.warning("Failed to upload reference photo %s: %s", path, exc)
+        finally:
+            if is_temp:
+                try:
+                    os.unlink(compressed_path)
+                except OSError:
+                    pass
     return urls
 
 
@@ -173,11 +185,18 @@ async def generate_transition_image(
 
     prev_frame_url: str | None = None
     if previous_frame_path:
+        compressed_path, is_temp = prepare_image_for_upload(previous_frame_path)
         try:
-            prev_frame_url = await fal_client.upload_file_async(previous_frame_path)
+            prev_frame_url = await fal_client.upload_file_async(compressed_path)
             logger.info("Uploaded previous frame for transition: %s", prev_frame_url)
         except Exception as exc:
             logger.warning("Failed to upload previous frame: %s", exc)
+        finally:
+            if is_temp:
+                try:
+                    os.unlink(compressed_path)
+                except OSError:
+                    pass
 
     all_urls = ref_urls + ([prev_frame_url] if prev_frame_url else [])
 

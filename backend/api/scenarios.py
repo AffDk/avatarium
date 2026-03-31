@@ -40,13 +40,21 @@ async def submit_scenario(
     # Extract person names for person-aware splitting
     person_names = [p.name for p in project.persons] if project.persons else []
 
-    # Collect photo file paths for multimodal Gemini analysis
+    # Collect user-provided descriptions (if any) — these replace Gemini photo analysis
+    person_descriptions: dict[str, str] = {}
     photo_paths: dict[str, list[str]] = {}
     if project.persons:
         for person in project.persons:
+            if person.description:
+                person_descriptions[person.name] = person.description
             paths = [photo.file_path for photo in person.photos if photo.file_path]
             if paths:
                 photo_paths[person.name] = paths
+
+    # When all persons have user-provided descriptions, skip sending photos to
+    # Gemini (saves multimodal token cost). Otherwise fall back to photo analysis.
+    all_described = bool(person_names) and len(person_descriptions) == len(person_names)
+    use_photos = (not all_described) and bool(photo_paths)
 
     # Check if scenario already exists — if so, delete old one for re-submission
     result = await db.execute(
@@ -62,7 +70,10 @@ async def submit_scenario(
     # Call Gemini for moderation + splitting
     try:
         gemini_result = await moderate_and_split(
-            body.text, person_names=person_names, photo_paths=photo_paths or None,
+            body.text,
+            person_names=person_names,
+            photo_paths=photo_paths if use_photos else None,
+            person_descriptions=person_descriptions if person_descriptions else None,
         )
     except Exception as exc:
         logger.exception("Gemini moderation failed for project %s", project_id)

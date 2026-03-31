@@ -45,16 +45,20 @@
         <!-- Upload errors -->
         <div id="upload-errors" class="upload-errors" style="display:none;"></div>
 
-        <!-- Existing photos -->
-        <div id="existing-photos" class="existing-photos-section" style="display: none;">
-            <h3>Already Uploaded</h3>
-            <div id="photo-list" class="person-groups"></div>
-        </div>
-
         <button id="upload-btn" class="btn btn-primary btn-upload" disabled>
             <span id="upload-btn-text">Upload Photos</span>
             <span id="upload-spinner" class="spinner" style="display:none;"></span>
         </button>
+    </section>
+
+    <!-- Person Descriptions Section -->
+    <section id="person-descriptions-section" class="person-descriptions-section" style="display: none;">
+        <h2>People in This Video</h2>
+        <p class="help-text">
+            Optionally write a visual description for each person. When saved, Gemini will use
+            your text instead of analyzing the photos — saving multimodal API costs.
+        </p>
+        <div id="photo-list" class="photo-list-cards"></div>
     </section>
 
     <!-- Scenario Section -->
@@ -98,14 +102,23 @@
 
     <!-- Generation Controls -->
     <section id="generation-controls" class="generation-controls" style="display: none;">
-        <button id="start-generation" class="btn btn-primary" disabled>
-            <span id="gen-btn-text">🎬 Start Generation</span>
-            <span id="gen-spinner" class="spinner" style="display:none;"></span>
-        </button>
-        <button id="abort-generation" class="btn btn--outline btn--sm" style="display: none; margin-left: 0.75rem;">
-            ⏹️ Abort Generation
-        </button>
-        <div id="cost-estimate" class="cost-estimate"></div>
+        <div class="resolution-selector">
+            <label for="resolution-select">📐 Video Resolution</label>
+            <select id="resolution-select" class="form-select resolution-select">
+                <option value="480p" selected>480p — Budget (768×512)</option>
+                <option value="720p">720p — High Quality (1280×720)</option>
+            </select>
+        </div>
+        <div id="cost-estimate" class="cost-estimate-range"></div>
+        <div class="generation-actions">
+            <button id="start-generation" class="btn btn-primary" disabled>
+                <span id="gen-btn-text">🎬 Start Generation</span>
+                <span id="gen-spinner" class="spinner" style="display:none;"></span>
+            </button>
+            <button id="abort-generation" class="btn btn--outline btn--sm" style="display: none; margin-left: 0.75rem;">
+                ⏹️ Abort Generation
+            </button>
+        </div>
     </section>
 
     <!-- Progress Section -->
@@ -151,6 +164,84 @@
     const pathParts = window.location.pathname.split('/');
     const projectId = pathParts[pathParts.length - 1];
     const headers = { 'Authorization': 'Bearer ' + token };
+
+    // ── Person descriptions ───────────────────────
+    async function savePersonDescriptions() {
+        const btn = document.getElementById('save-descriptions-btn');
+        if (btn) { btn.disabled = true; btn.textContent = '⏳ Saving...'; }
+        const inputs = document.querySelectorAll('.person-desc-input');
+        const descriptions = {};
+        inputs.forEach(inp => {
+            const name = inp.dataset.person;
+            const val = inp.value.trim();
+            if (name && val) descriptions[name] = val;
+        });
+        try {
+            const r = await fetch(`/api/projects/${projectId}/persons/descriptions`, {
+                method: 'PATCH',
+                headers: { ...headers, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ descriptions })
+            });
+            if (r.ok) {
+                if (btn) { btn.disabled = false; btn.textContent = '✅ Descriptions saved'; }
+                // Update badges
+                document.querySelectorAll('.person-group-card').forEach(card => {
+                    const name = card.dataset.person;
+                    const inp = card.querySelector('.person-desc-input');
+                    const existing = card.querySelector('.desc-saved-badge');
+                    if (inp && inp.value.trim()) {
+                        if (!existing) {
+                            const badge = document.createElement('span');
+                            badge.className = 'desc-saved-badge';
+                            badge.textContent = '✅ Description saved';
+                            card.querySelector('.person-group-count').after(badge);
+                        }
+                    } else if (existing) {
+                        existing.remove();
+                    }
+                });
+                setTimeout(() => { if (btn) btn.textContent = '💾 Save Descriptions'; }, 2500);
+            } else {
+                if (btn) { btn.disabled = false; btn.textContent = '❌ Save failed — retry'; }
+            }
+        } catch {
+            if (btn) { btn.disabled = false; btn.textContent = '❌ Network error'; }
+        }
+    }
+
+    // ── Cost estimate ─────────────────────────────
+    async function fetchCostEstimate(resolution) {
+        const el = document.getElementById('cost-estimate');
+        if (!el) return;
+        el.textContent = '⏳ Loading estimate...';
+        try {
+            const r = await fetch(
+                `/api/projects/${projectId}/cost-estimate?resolution=${resolution}`,
+                { headers }
+            );
+            if (!r.ok) { el.textContent = ''; return; }
+            const d = await r.json();
+            if (!d.n_clips) {
+                el.innerHTML = '<span class="cost-model-label">No segments yet — cost estimate will appear after scenario is submitted.</span>';
+                return;
+            }
+            el.innerHTML =
+                `<div class="cost-estimate-body">` +
+                `<span class="cost-range">Estimated cost: <strong>$${d.total_low.toFixed(2)}&ndash;$${d.total_high.toFixed(2)}</strong></span>` +
+                ` <span class="cost-clips">(${d.n_clips} clip${d.n_clips !== 1 ? 's' : ''} &times; $${d.per_clip_low.toFixed(2)}&ndash;$${d.per_clip_high.toFixed(2)}/clip)</span>` +
+                `<div class="cost-models">Video model: <code>${d.video_model}</code></div>` +
+                (d.note ? `<div class="cost-note">${d.note}</div>` : '') +
+                `</div>`;
+        } catch {
+            el.textContent = '';
+        }
+    }
+
+    function showGenerationControls() {
+        document.getElementById('generation-controls').style.display = 'block';
+        const res = document.getElementById('resolution-select')?.value || '480p';
+        fetchCostEstimate(res);
+    }
 
     // ── Filename validation helpers ──────────────
     const FILENAME_REGEX = /^[a-zA-Z0-9]+_\d+\.\w+$/;
@@ -204,14 +295,14 @@
                 if (genBtnText) genBtnText.textContent = 'Generating...';
                 if (genSpinner) genSpinner.style.display = 'inline-block';
                 if (abortBtn) abortBtn.style.display = 'inline-flex';
-                document.getElementById('generation-controls').style.display = 'block';
+                showGenerationControls();
                 pollInterval = setInterval(pollProgress, 3000);
                 pollProgress();
             }
 
             // Show failed state on page load — enable retry + show last error
             if (data.status === 'failed') {
-                document.getElementById('generation-controls').style.display = 'block';
+                showGenerationControls();
                 const genBtn = document.getElementById('start-generation');
                 const genBtnText = document.getElementById('gen-btn-text');
                 const abortBtn = document.getElementById('abort-generation');
@@ -222,21 +313,43 @@
                 pollProgress();
             }
 
-            // 2. Load existing photos
+            // 2. Load existing photos / person descriptions
             try {
                 const photosResp = await fetch(`/api/projects/${projectId}/photos`, { headers });
                 if (photosResp.ok) {
                     const photosData = await photosResp.json();
                     if (photosData && photosData.persons && photosData.persons.length > 0) {
-                        const container = document.getElementById('existing-photos');
+                        const section = document.getElementById('person-descriptions-section');
                         const list = document.getElementById('photo-list');
-                        container.style.display = 'block';
-                        list.innerHTML = photosData.persons.map(group =>
-                            `<div class="person-group-card">
-                                <span class="person-group-name">${group.person.name}</span>
-                                <span class="person-group-count">${group.person.photo_count} photo(s)</span>
-                            </div>`
-                        ).join('');
+                        section.style.display = 'block';
+                        list.innerHTML = photosData.persons.map(group => {
+                            const existingDesc = (group.person.description || '').replace(/"/g, '&quot;');
+                            const savedBadge = group.person.description
+                                ? `<span class="desc-saved-badge">✅ Description saved — Gemini will use this instead of the photo</span>`
+                                : '';
+                            return `<div class="person-group-card" data-person="${group.person.name}">
+                                <div class="person-card-header">
+                                    <span class="person-group-name">👤 ${group.person.name}</span>
+                                    <span class="person-group-count">${group.person.photo_count} photo(s) uploaded</span>
+                                    ${savedBadge}
+                                </div>
+                                <div class="person-desc-group">
+                                    <label class="person-desc-label">Visual description <em>(optional)</em> — if filled, Gemini uses this text instead of analyzing your photos:</label>
+                                    <textarea class="person-desc-input" data-person="${group.person.name}"
+                                        rows="3" placeholder="e.g. tall woman with curly red hair, green eyes, freckles, mid-30s...">${existingDesc}</textarea>
+                                </div>
+                            </div>`;
+                        }).join('');
+                        // Add save button below the list (avoid duplicating on re-render)
+                        const existingBtn = document.getElementById('save-descriptions-btn');
+                        if (!existingBtn) {
+                            const saveBtn = document.createElement('button');
+                            saveBtn.id = 'save-descriptions-btn';
+                            saveBtn.className = 'btn btn--outline btn--sm desc-save-btn';
+                            saveBtn.textContent = '💾 Save Descriptions';
+                            saveBtn.addEventListener('click', savePersonDescriptions);
+                            list.after(saveBtn);
+                        }
                     }
                 }
             } catch (e) {
@@ -276,7 +389,7 @@
                         });
 
                         if (sData.moderation_status === 'approved') {
-                            document.getElementById('generation-controls').style.display = 'block';
+                            showGenerationControls();
                             document.getElementById('start-generation').disabled = false;
                             // Show regenerate segments button (only if not already generating/completed)
                             const projStatus = document.getElementById('project-status').textContent;
@@ -873,6 +986,10 @@
             });
     }
 
+    document.getElementById('resolution-select')?.addEventListener('change', (e) => {
+        fetchCostEstimate(e.target.value);
+    });
+
     document.getElementById('start-generation')?.addEventListener('click', () => {
         const genBtn = document.getElementById('start-generation');
         const genBtnText = document.getElementById('gen-btn-text');
@@ -891,7 +1008,10 @@
 
         fetch(`/api/projects/${projectId}/generate`, {
             method: 'POST',
-            headers
+            headers: { ...headers, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                video_resolution: (document.getElementById('resolution-select')?.value || '480p')
+            })
         }).then(r => {
             if (r.ok) {
                 if (genBtnText) genBtnText.textContent = 'Generating...';

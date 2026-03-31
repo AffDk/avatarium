@@ -78,6 +78,11 @@ class Project(Base):
         Numeric(6, 4),
         nullable=True,
     )
+    video_resolution: Mapped[str | None] = mapped_column(
+        String(10),
+        nullable=True,
+        default="480p",
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
@@ -118,6 +123,10 @@ class Person(Base):
     name: Mapped[str] = mapped_column(
         String(100),
         nullable=False,
+    )
+    description: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
