@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     # ── fal.ai ──────────────────────────────────
     fal_key: str = ""
     fal_image_model: str = "fal-ai/qwen-image-edit-2511-multiple-angles"
-    fal_video_model: str = "fal-ai/ltx-video-13b-distilled/image-to-video"
+    fal_video_model: str = "fal-ai/kling-video/v1.6/standard/elements"
 
     # ── Gemini ──────────────────────────────────
     gemini_api_key: str = ""

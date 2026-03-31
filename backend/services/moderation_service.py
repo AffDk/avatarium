@@ -413,11 +413,11 @@ def _segment_has_reference_photo_tag(
 ) -> bool:
     """Return True if a reference-photo marker appears after the character name.
 
-    Accepts either of the two forms:
-    - ``(reference photo)`` — the preferred concise format
-    - ``as seen in the reference photo`` — legacy verbose format
+    Matches both the concise ``(reference photo)`` form and compound tags that
+    Gemini writes such as ``(young woman with dark hair, reference photo)``
+    — both contain the substring ``reference photo`` in the window after the
+    character name.  Also accepts the legacy verbose form.
     """
-    markers = ["(reference photo)", "as seen in the reference photo"]
     search_start = 0
     while True:
         name_pos = description_lower.find(name_lower, search_start)
@@ -427,9 +427,11 @@ def _segment_has_reference_photo_tag(
         # Check a reasonable window after the name
         window_end = min(after_name + 200, len(description_lower))
         window = description_lower[after_name:window_end]
-        for marker in markers:
-            if marker in window:
-                return True
+        # Accept any form that contains "reference photo" (with or without a
+        # leading opening parenthesis, so compound tags like
+        # "(young lady in white dress, reference photo)" are detected too).
+        if "reference photo" in window:
+            return True
         search_start = after_name
 
     return False

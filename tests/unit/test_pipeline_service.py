@@ -2,7 +2,7 @@
 
 Covers:
 - Image generation model call (fal-ai/qwen-image)
-- Video clip generation model call (fal-ai/ltx-video-13b-distilled)
+- Video clip generation model call (configured via settings.fal_video_model)
 - Last-frame extraction via ffmpeg
 - Pipeline orchestration is now DB-aware (run_pipeline_background);
   integration tests in tests/integration/ should cover the full flow.
@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from backend.config import settings
 from backend.services.image_gen_service import generate_initial_image
 from backend.services.video_gen_service import extract_last_frame, generate_video_clip
 
@@ -47,7 +48,7 @@ class TestImageGenService:
 
 
 class TestVideoGenService:
-    """Tests for generate_video_clip using fal.ai LTX Video."""
+    """Tests for generate_video_clip using the configured fal.ai video model."""
 
     @pytest.mark.asyncio
     @patch("backend.services.video_gen_service.download_file", new_callable=AsyncMock)
@@ -67,7 +68,7 @@ class TestVideoGenService:
         )
 
         mock_poll.assert_called_once()
-        assert "ltx-video" in mock_poll.call_args[0][0]
+        assert mock_poll.call_args[0][0] == settings.fal_video_model
 
     @pytest.mark.asyncio
     @patch("backend.services.video_gen_service.subprocess")

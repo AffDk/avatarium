@@ -327,12 +327,14 @@ async def _run(project_id: uuid.UUID, db: AsyncSession) -> None:  # noqa: C901
 
         # retry loop (FR-024)
         last_err: Exception | None = None
+        seg_ref_photos = _get_segment_ref_photos(sorted(seg_persons), person_photo_map)
         for attempt in range(1 + MAX_RETRIES):
             try:
                 video_path = await generate_video_clip(
                     image_path=input_image, prompt=seg.description,
                     output_path=clip_path, style=project.video_style.value,
                     resolution=project.video_resolution or "480p",
+                    reference_image_paths=seg_ref_photos or None,
                 )
                 last_err = None
                 break
