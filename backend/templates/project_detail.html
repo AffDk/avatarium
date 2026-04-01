@@ -121,20 +121,12 @@
         </div>
     </section>
 
-    <!-- Progress Section -->
-    <section id="progress-section" class="progress-section" style="display: none;">
-        <h2>Generation Progress</h2>
-        <div id="progress-message" class="status-indicator status-indicator--loading"></div>
-        <div id="progress-bar-container" class="progress-bar-wrapper" style="display: none;">
-            <div class="progress-bar">
-                <div id="progress-bar-fill" class="progress-bar__fill" style="width: 0%"></div>
-            </div>
-            <span id="progress-percent" class="progress-percent">0%</span>
-        </div>
-        <div id="clip-progress" class="clip-progress-grid"></div>
+    <!-- Generation Status Section -->
+    <section id="generation-status-section" class="progress-section" style="display: none;">
+        <div id="generation-status-message"></div>
     </section>
 
-    <!-- Video Player Section -->
+    <!-- Video Player Section (shown when completed and user revisits the page) -->
     <section id="video-section" class="video-section" style="display: none;">
         <h2>Final Video</h2>
         <video id="video-player" controls class="video-player">
@@ -142,12 +134,6 @@
             Your browser does not support the video tag.
         </video>
         <a id="download-btn" class="btn btn-secondary" download>⬇️ Download Video</a>
-    </section>
-
-    <!-- Clip Previews -->
-    <section id="clips-section" class="clips-section" style="display: none;">
-        <h2>Individual Clips</h2>
-        <div id="clip-previews" class="clip-previews"></div>
     </section>
 </div>
 
@@ -285,7 +271,7 @@
                 document.getElementById('upload-section').style.display = 'block';
             }
 
-            // Auto-start polling if project is already generating
+            // Show queued message if project is already generating in background
             if (data.status === 'generating' || data.status === 'concatenating') {
                 const genBtn = document.getElementById('start-generation');
                 const genBtnText = document.getElementById('gen-btn-text');
@@ -296,11 +282,10 @@
                 if (genSpinner) genSpinner.style.display = 'inline-block';
                 if (abortBtn) abortBtn.style.display = 'inline-flex';
                 showGenerationControls();
-                pollInterval = setInterval(pollProgress, 3000);
-                pollProgress();
+                showQueuedMessage();
             }
 
-            // Show failed state on page load — enable retry + show last error
+            // Show failed state on page load
             if (data.status === 'failed') {
                 showGenerationControls();
                 const genBtn = document.getElementById('start-generation');
@@ -309,8 +294,29 @@
                 if (genBtn) genBtn.disabled = false;
                 if (genBtnText) genBtnText.textContent = '🎬 Retry Generation';
                 if (abortBtn) abortBtn.style.display = 'inline-flex';
-                // Do one poll to show the error details
-                pollProgress();
+                showGenerationStatusMessage(
+                    '❌ Video generation failed. Please retry or contact support.',
+                    'error'
+                );
+            }
+
+            // Show video player when user revisits a completed project
+            if (data.status === 'completed') {
+                try {
+                    const statusResp = await fetch(`/api/projects/${projectId}/status`, { headers });
+                    if (statusResp.ok) {
+                        const sData = await statusResp.json();
+                        if (sData.final_video_url) {
+                            const videoSection = document.getElementById('video-section');
+                            videoSection.style.display = 'block';
+                            document.getElementById('video-source').src = sData.final_video_url;
+                            document.getElementById('video-player').load();
+                            document.getElementById('download-btn').href = sData.final_video_url;
+                        }
+                    }
+                } catch (e) {
+                    console.warn('Failed to load completed video status:', e);
+                }
             }
 
             // 2. Load existing photos / person descriptions
@@ -864,126 +870,30 @@
         el.style.display = 'block';
     }
 
-    // ── Poll progress for generating projects ────
-    let pollInterval = null;
-    function pollProgress() {
-        fetch(`/api/projects/${projectId}/status`, { headers })
-            .then(r => r.json())
-            .then(data => {
-                const section = document.getElementById('progress-section');
-                section.style.display = 'block';
+    // ── Generation status helpers ────────────────
+    function showQueuedMessage() {
+        const section = document.getElementById('generation-status-section');
+        const msgEl = document.getElementById('generation-status-message');
+        if (section) section.style.display = 'block';
+        if (msgEl) {
+            msgEl.className = 'status-indicator status-indicator--loading';
+            msgEl.innerHTML =
+                '🎬 Your video is being generated in the background. ' +
+                'Once it\'s ready, a download link will be sent to your email address. ' +
+                'You can safely close this page.';
+        }
+    }
 
-                // Update message
-                const msgEl = document.getElementById('progress-message');
-                if (data.status === 'failed') {
-                    msgEl.className = 'status-indicator status-indicator--error';
-                } else if (data.status === 'completed') {
-                    msgEl.className = 'status-indicator status-indicator--success';
-                } else {
-                    msgEl.className = 'status-indicator status-indicator--loading';
-                }
-                msgEl.textContent = data.message || `Status: ${data.status}`;
-
-                // Update progress bar
-                if (data.total_segments && data.total_segments > 0) {
-                    const barContainer = document.getElementById('progress-bar-container');
-                    barContainer.style.display = 'flex';
-                    const pct = Math.round((data.completed_segments / data.total_segments) * 100);
-                    document.getElementById('progress-bar-fill').style.width = pct + '%';
-                    document.getElementById('progress-percent').textContent = pct + '%';
-                }
-
-                // Render clip-by-clip progress
-                if (data.clips && data.clips.length > 0) {
-                    const grid = document.getElementById('clip-progress');
-                    grid.innerHTML = data.clips.map(clip => {
-                        let icon, statusClass;
-                        switch (clip.status) {
-                            case 'completed': icon = '✅'; statusClass = 'clip-tile--completed'; break;
-                            case 'generating': icon = '⏳'; statusClass = 'clip-tile--generating'; break;
-                            case 'failed': icon = '❌'; statusClass = 'clip-tile--failed'; break;
-                            default: icon = '⬜'; statusClass = 'clip-tile--pending'; break;
-                        }
-                        const retryInfo = clip.retry_count > 0 ? ` (retry ${clip.retry_count})` : '';
-                        const errorInfo = clip.error_message ? `<div class="clip-tile-error" title="${clip.error_message}">⚠️ ${clip.error_message.substring(0, 60)}...</div>` : '';
-                        return `<div class="clip-tile ${statusClass}">
-                            <span class="clip-tile-icon">${icon}</span>
-                            <span class="clip-tile-label">Clip ${clip.sequence_number}${retryInfo}</span>
-                            ${errorInfo}
-                        </div>`;
-                    }).join('');
-
-                    // Show completed clip video previews in real time
-                    const completedClips = data.clips.filter(c => c.status === 'completed');
-                    if (completedClips.length > 0) {
-                        const clipsSection = document.getElementById('clips-section');
-                        clipsSection.style.display = 'block';
-                        const previews = document.getElementById('clip-previews');
-                        previews.innerHTML = completedClips.map(c => {
-                            const clipUrl = `/generated/${projectId}/clips/clip_${String(c.sequence_number).padStart(3, '0')}.mp4`;
-                            return `<div class="clip-preview-card">
-                                <video controls class="clip-preview-video" preload="metadata">
-                                    <source src="${clipUrl}" type="video/mp4">
-                                </video>
-                                <span class="clip-preview-label">Clip ${c.sequence_number}</span>
-                            </div>`;
-                        }).join('');
-                    }
-                }
-
-                // Handle completion
-                if (data.status === 'completed') {
-                    clearInterval(pollInterval);
-                    const genBtn = document.getElementById('start-generation');
-                    const genBtnText = document.getElementById('gen-btn-text');
-                    const genSpinner = document.getElementById('gen-spinner');
-                    const abortBtn = document.getElementById('abort-generation');
-                    if (genBtnText) genBtnText.textContent = '🎬 Start Generation';
-                    if (genSpinner) genSpinner.style.display = 'none';
-                    if (genBtn) genBtn.disabled = true;
-                    if (abortBtn) abortBtn.style.display = 'none';
-
-                    // Show video player if final video URL available
-                    if (data.final_video_url) {
-                        const videoSection = document.getElementById('video-section');
-                        videoSection.style.display = 'block';
-                        document.getElementById('video-source').src = data.final_video_url;
-                        document.getElementById('video-player').load();
-                        document.getElementById('download-btn').href = data.final_video_url;
-                    }
-
-                    // Show individual clip previews
-                    if (data.clips && data.clips.length > 0) {
-                        const clipsSection = document.getElementById('clips-section');
-                        clipsSection.style.display = 'block';
-                        const previews = document.getElementById('clip-previews');
-                        previews.innerHTML = data.clips
-                            .filter(c => c.status === 'completed')
-                            .map(c => {
-                                const clipUrl = `/generated/${projectId}/clips/clip_${String(c.sequence_number).padStart(3, '0')}.mp4`;
-                                return `<div class="clip-preview-card">
-                                    <video controls class="clip-preview-video" preload="metadata">
-                                        <source src="${clipUrl}" type="video/mp4">
-                                    </video>
-                                    <span class="clip-preview-label">Clip ${c.sequence_number}</span>
-                                </div>`;
-                            }).join('');
-                    }
-                } else if (data.status === 'failed') {
-                    clearInterval(pollInterval);
-                    const genBtn = document.getElementById('start-generation');
-                    const genBtnText = document.getElementById('gen-btn-text');
-                    const genSpinner = document.getElementById('gen-spinner');
-                    const abortBtn = document.getElementById('abort-generation');
-                    if (genBtn) genBtn.disabled = false;
-                    if (genBtnText) genBtnText.textContent = '🎬 Retry Generation';
-                    if (genSpinner) genSpinner.style.display = 'none';
-                    if (abortBtn) abortBtn.style.display = 'inline-flex';
-                }
-            })
-            .catch(err => {
-                console.warn('Poll error:', err);
-            });
+    function showGenerationStatusMessage(msg, type) {
+        const section = document.getElementById('generation-status-section');
+        const msgEl = document.getElementById('generation-status-message');
+        if (section) section.style.display = 'block';
+        if (msgEl) {
+            msgEl.className = type === 'error'
+                ? 'status-indicator status-indicator--error'
+                : 'status-indicator status-indicator--success';
+            msgEl.textContent = msg;
+        }
     }
 
     document.getElementById('resolution-select')?.addEventListener('change', (e) => {
@@ -1000,12 +910,6 @@
         if (genSpinner) genSpinner.style.display = 'inline-block';
         if (abortBtn) abortBtn.style.display = 'inline-flex';
 
-        // Show progress section immediately with initial status
-        const progressSection = document.getElementById('progress-section');
-        progressSection.style.display = 'block';
-        document.getElementById('progress-message').textContent = '⏳ Initiating video generation pipeline... Please wait.';
-        document.getElementById('progress-message').className = 'status-indicator status-indicator--loading';
-
         fetch(`/api/projects/${projectId}/generate`, {
             method: 'POST',
             headers: { ...headers, 'Content-Type': 'application/json' },
@@ -1015,10 +919,8 @@
         }).then(r => {
             if (r.ok) {
                 if (genBtnText) genBtnText.textContent = 'Generating...';
-                document.getElementById('progress-message').textContent = '🎬 Generation started — polling for updates...';
-                pollInterval = setInterval(pollProgress, 3000);
-                // First poll after a short delay to give pipeline time to create clip records
-                setTimeout(pollProgress, 2000);
+                if (genSpinner) genSpinner.style.display = 'inline-block';
+                showQueuedMessage();
             } else {
                 genBtn.disabled = false;
                 if (genBtnText) genBtnText.textContent = '🎬 Start Generation';
@@ -1026,19 +928,17 @@
                 if (abortBtn) abortBtn.style.display = 'none';
                 r.json().then(err => {
                     const detail = err.detail || 'Failed to start generation.';
-                    document.getElementById('progress-message').textContent = '❌ ' + detail;
+                    showGenerationStatusMessage('❌ ' + detail, 'error');
                 }).catch(() => {
-                    document.getElementById('progress-message').textContent = '❌ Failed to start generation. Please try again.';
+                    showGenerationStatusMessage('❌ Failed to start generation. Please try again.', 'error');
                 });
-                document.getElementById('progress-message').className = 'status-indicator status-indicator--error';
             }
         }).catch(() => {
             genBtn.disabled = false;
             if (genBtnText) genBtnText.textContent = '🎬 Start Generation';
             if (genSpinner) genSpinner.style.display = 'none';
             if (abortBtn) abortBtn.style.display = 'none';
-            document.getElementById('progress-message').textContent = '❌ Network error — could not start generation.';
-            document.getElementById('progress-message').className = 'status-indicator status-indicator--error';
+            showGenerationStatusMessage('❌ Network error — could not start generation.', 'error');
         });
     });
 

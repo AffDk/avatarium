@@ -43,6 +43,14 @@ class Settings(BaseSettings):
     # ── Rate Limiting ────────────────────────────
     rate_limit_default: str = "10/minute"
 
+    # ── Email (SMTP) ─────────────────────────────
+    smtp_host: str = "smtp.gmail.com"
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""
+    app_base_url: str = "http://localhost:8000"
+
     @property
     def is_development(self) -> bool:
         return self.app_env == "development"

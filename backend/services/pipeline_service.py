@@ -23,8 +23,10 @@ from backend.config import settings
 from backend.database import async_session_factory
 from backend.models.project import Person, Project, ProjectStatus
 from backend.models.scenario import ModerationStatus, Scenario
+from backend.models.user import User
 from backend.models.video import ClipStatus, FinalVideo, VideoClip
 from backend.services._utils import ffmpeg_exe
+from backend.services.email_service import send_video_ready_email
 from backend.services.image_gen_service import (
     generate_initial_image,
     generate_transition_image,
@@ -395,3 +397,19 @@ async def _run(project_id: uuid.UUID, db: AsyncSession) -> None:  # noqa: C901
     total_elapsed = time.monotonic() - pipeline_start
     _log("Pipeline [%s]: COMPLETED in %.0fs (%.1f min) — %s",
          project_id, total_elapsed, total_elapsed / 60, final_path)
+
+    # ── notify user by email ───────────────────────────────────────
+    try:
+        user = (await db.execute(
+            select(User).where(User.id == project.user_id)
+        )).scalar_one_or_none()
+        if user:
+            await asyncio.to_thread(
+                send_video_ready_email,
+                user.email,
+                user.display_name,
+                project.title,
+                str(project.id),
+            )
+    except Exception as exc:
+        logger.error("Pipeline [%s]: failed to send completion email: %s", project_id, exc)
